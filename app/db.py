@@ -65,6 +65,11 @@ CREATE TABLE IF NOT EXISTS query_log (
   created_at       TEXT DEFAULT (datetime('now', 'localtime'))
 );
 
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_qa_l2       ON qa(l2_id);
 CREATE INDEX IF NOT EXISTS idx_l1_kb       ON intent_l1(kb_id);
 CREATE INDEX IF NOT EXISTS idx_l2_l1       ON intent_l2(l1_id);

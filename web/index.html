@@ -46,6 +46,19 @@ label.field span { display: block; margin-bottom: 5px; font-weight: 600; }
 .fb-useful { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
 .fb-useless { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
 .empty-new { background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; border-radius: 10px; padding: 12px 14px; font-size: 13.5px; }
+.step-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 14px; margin-top: 10px; font-size: 13px; }
+.step-card.running { background: #eef2ff; border-color: #c7d2fe; }
+.step-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.engine-badge { border-radius: 6px; padding: 1px 8px; font-size: 11.5px; font-weight: 600; }
+.engine-badge.llm { background: #dcfce7; color: #15803d; }
+.engine-badge.keyword { background: #fef3c7; color: #b45309; }
+.engine-badge.none { background: #f1f5f9; color: #64748b; }
+.step-ms { font-size: 11.5px; color: #94a3b8; white-space: nowrap; }
+.step-body { color: #475569; line-height: 1.7; font-size: 12.5px; }
+.step-body .dim { color: #94a3b8; }
+.trace-details { margin-top: 12px; }
+.trace-details summary { cursor: pointer; font-size: 12.5px; color: #64748b; }
+.trace-pre { background: #0f172a; color: #a5f3fc; border-radius: 10px; padding: 12px; font-size: 11.5px; line-height: 1.6; overflow-x: auto; white-space: pre-wrap; word-break: break-all; margin-top: 8px; }
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .stat { background: #fff; border-radius: 12px; padding: 16px; text-align: center; }
 .stat .num { font-size: 26px; font-weight: 800; color: #1e293b; }
@@ -116,12 +129,39 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
     <!-- 匹配页 -->
     <div v-if="page==='match'">
       <div class="card">
-        <div class="section-title"><h3>面试官问了你什么？</h3><span style="font-size:12px;color:#94a3b8">当前库：{{ currentKb?.name }}</span></div>
+        <div class="section-title"><h3>面试官问了你什么？</h3>
+          <span style="flex:1"></span>
+          <button class="btn sm ghost" @click="openSettings">⚙ 匹配参数</button>
+          <span style="font-size:12px;color:#94a3b8">当前库：{{ currentKb?.name }}</span>
+        </div>
         <div class="ask-box">
           <textarea v-model="question" placeholder="输入面试官的原话，例如：你的项目里检索不准是怎么优化的？"></textarea>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;margin-top:10px">
+          <label style="font-size:12.5px;color:#64748b;display:flex;align-items:center;gap:6px">
+            返回条数
+            <select v-model="topK" style="width:90px;padding:5px 8px;font-size:12.5px">
+              <option value="">默认</option>
+              <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+              <option value="5">5</option><option value="8">8</option>
+            </select>
+          </label>
+          <span style="flex:1"></span>
           <button class="btn" @click="doMatch" :disabled="matching || !question.trim()">{{ matching ? '匹配中…' : '匹配' }}</button>
         </div>
         <div class="err" v-if="matchErr">{{ matchErr }}</div>
+
+        <!-- 实时进度：每一步做什么、用什么引擎、耗时 -->
+        <div v-if="matching && !matchSteps.length" class="step-card running">⏳ ① 意图路由中…（LLM 在线约 1~3 秒）</div>
+        <div v-for="s in matchSteps" :key="s.stage" class="step-card" :class="{running: s._running}">
+          <div class="step-head">
+            <b>{{ s.label }}</b>
+            <span class="engine-badge" :class="s.engine">{{ s.engineLabel }}</span>
+            <span style="flex:1"></span>
+            <span class="step-ms">{{ s.ms ? s.ms + ' ms' : '进行中…' }}</span>
+          </div>
+          <div class="step-body" v-html="s.text"></div>
+        </div>
       </div>
 
       <div v-if="matchResult" class="card">
@@ -150,8 +190,14 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
         </div>
 
         <div v-if="matchResult.source==='new'" class="empty-new">
-          题库还没有覆盖这个问题，已记录到<b>新问题池</b>（复盘统计页可一键转正为 QA）。
+          <div>题库还没有覆盖这个问题，已记录到<b>新问题池</b>（复盘统计页可一键转正为 QA）。</div>
+          <div style="font-size:12px;margin-top:6px;color:#b45309" v-html="noMatchReason"></div>
         </div>
+
+        <details v-if="matchResult.trace" class="trace-details">
+          <summary>🔍 查看完整匹配过程（参数 / 各阶段耗时 / 被过滤的候选）</summary>
+          <pre class="trace-pre">{{ traceText }}</pre>
+        </details>
       </div>
     </div>
 
@@ -346,6 +392,28 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
     </div>
   </div>
 
+  <!-- 匹配参数弹窗 -->
+  <div v-if="settingsModal" class="modal-mask" @click.self="settingsModal=false">
+    <div class="modal" style="width:min(420px,92vw)">
+      <h3>⚙ 匹配参数</h3>
+      <p style="font-size:12.5px;color:#64748b;line-height:1.7;margin-bottom:14px">
+        保存后立即生效（存服务器数据库，无需重启）。取值 0~1；调高 → 更严格、宁可进新问题池；调低 → 更容易出候选。
+      </p>
+      <label class="field"><span>LLM 精配最低命中分 match_min_score（默认 0.7）</span>
+        <input class="input" type="number" step="0.05" min="0" max="1" v-model="settingsForm.match_min_score"></label>
+      <label class="field"><span>关键词路由定位线 route_min_score（默认 0.3，仅 LLM 不可用时生效）</span>
+        <input class="input" type="number" step="0.05" min="0" max="1" v-model="settingsForm.route_min_score"></label>
+      <label class="field"><span>关键词精配命中线 keyword_match_min_score（默认 0.5）</span>
+        <input class="input" type="number" step="0.05" min="0" max="1" v-model="settingsForm.keyword_match_min_score"></label>
+      <label class="field"><span>默认返回条数 default_top_k（1~10）</span>
+        <input class="input" type="number" step="1" min="1" max="10" v-model="settingsForm.default_top_k"></label>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button class="btn ghost" @click="settingsModal=false">取消</button>
+        <button class="btn" @click="saveSettings" :disabled="settingsSaving">{{ settingsSaving ? '保存中…' : '保存' }}</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 新问题转正抽屉 -->
   <div v-if="fromLogModal" class="drawer-mask" @click.self="fromLogModal=false">
     <div class="drawer">
@@ -380,6 +448,8 @@ createApp({
       page: 'match',
       kbs: [], kbId: null,
       question: '', matching: false, matchErr: '', matchResult: null, feedbackDone: {},
+      topK: '', matchSteps: [],
+      settingsModal: false, settingsForm: {}, settingsSaving: false,
       tree: [], expanded: {},
       qas: [], filterL1: null, filterL2: null, keyword: '',
       overview: {}, hot: [], unmatched: [],
@@ -394,6 +464,25 @@ createApp({
   },
   computed: {
     currentKb() { return this.kbs.find(k => k.id === this.kbId); },
+    traceText() {
+      const t = this.matchResult?.trace;
+      return t ? JSON.stringify(t, null, 2) : '';
+    },
+    noMatchReason() {
+      const t = this.matchResult?.trace;
+      if (!t) return '';
+      const parts = [];
+      if (t.match?.engine === 'llm' && t.match?.dropped?.length) {
+        const d = t.match.dropped.map(x => `「${(x.question || x.id).slice(0, 25)}」${x.score}分`).join('、');
+        parts.push(`LLM 找到 ${t.match.raw_count} 个候选，但均低于阈值 ${t.match.min_score}（${d}）已过滤`);
+      }
+      if (t.fallback?.best_score !== undefined) {
+        parts.push(`全库关键词兜底：最高重合度 ${t.fallback.best_score} < 命中线 ${t.fallback.threshold}`);
+      } else if (t.fallback?.engine === 'none') {
+        parts.push(t.fallback.trigger || '无候选可匹配');
+      }
+      return parts.join('；');
+    },
   },
   async mounted() {
     if (this.token) await this.initData();
@@ -437,10 +526,69 @@ createApp({
     },
     toggleL1(id) { this.expanded[id] = !this.expanded[id]; },
     async doMatch() {
-      this.matching = true; this.matchErr = ''; this.matchResult = null; this.feedbackDone = {};
+      this.matching = true; this.matchErr = ''; this.matchResult = null; this.feedbackDone = {}; this.matchSteps = [];
       try {
-        this.matchResult = await this.api('POST', '/api/match', { kb_id: this.kbId, question: this.question });
+        const resp = await fetch(API + '/api/match/stream', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + this.token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kb_id: this.kbId, question: this.question, top_k: this.topK ? parseInt(this.topK) : null }),
+        });
+        if (resp.status === 401) { this.token = ''; localStorage.removeItem('token'); throw new Error('登录已过期'); }
+        if (!resp.ok || !resp.body) { const d = await resp.json().catch(() => ({})); throw new Error(d.detail || ('请求失败 ' + resp.status)); }
+        const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          let idx;
+          while ((idx = buf.indexOf('\n\n')) >= 0) {
+            const chunk = buf.slice(0, idx).trim(); buf = buf.slice(idx + 2);
+            if (!chunk.startsWith('data: ')) continue;
+            this.onMatchEvent(JSON.parse(chunk.slice(6)));
+          }
+        }
       } catch (e) { this.matchErr = e.message; } finally { this.matching = false; }
+    },
+    onMatchEvent(evt) {
+      if (evt.stage === 'error') { this.matchErr = evt.data.detail || '匹配失败'; return; }
+      if (evt.stage === 'done') { this.matchResult = evt.data; return; }
+      const d = evt.data;
+      let label = '', engineLabel = '', text = '';
+      if (evt.stage === 'route') {
+        label = '① 意图路由';
+        engineLabel = d.engine === 'llm' ? 'LLM 语义路由' : (d.engine === 'keyword' ? '关键词兜底' : '无');
+        const target = (d.reason || '').includes('未定位') || !d.l2_id
+          ? `<span class="dim">未能定位子意图（最高重合度 ${d.best_score ?? '-'} < 定位线 ${d.threshold ?? '-'}）</span>`
+          : `定位到 <b>${d.l1_name || d.l1_id || '未知'}</b> ▸ <b>${d.l2_name || d.l2_id}</b> · confidence ${d.confidence}`;
+        text = `${target}<br><span class="dim">${d.reason || ''} · 候选子意图 ${d.pool_size ?? '-'} 个</span>`;
+        this.matchSteps.push({ stage: evt.stage, label, engine: d.engine, engineLabel, ms: d.ms, text });
+      } else if (evt.stage === 'match') {
+        label = '② 候选精配';
+        engineLabel = d.engine === 'llm' ? 'LLM 语义匹配' : (d.engine === 'keyword' ? '关键词兜底' : '无');
+        const kept = d.raw_count !== undefined ? `${d.raw_count} 个候选 → 达标 ${d.raw_count - (d.dropped?.length || 0)} 个` : `候选池 ${d.pool_size} 个`;
+        const dropped = d.dropped?.length
+          ? `<br><span class="dim">已过滤（低于 ${d.min_score}）：${d.dropped.map(x => `「${(x.question || x.id).slice(0, 20)}」${x.score}分`).join('、')}</span>` : '';
+        text = `候选池 ${d.pool_size} 个 · ${kept}${dropped}`;
+        this.matchSteps.push({ stage: evt.stage, label, engine: d.engine, engineLabel, ms: d.ms, text });
+      } else if (evt.stage === 'fallback') {
+        label = '③ 全库二次兜底';
+        engineLabel = '关键词';
+        text = `触发原因：${d.trigger} · 扫描全库 ${d.pool_size} 个 QA · 最高重合度 ${d.best_score}（命中线 ${d.threshold}）`;
+        this.matchSteps.push({ stage: evt.stage, label, engine: 'keyword', engineLabel, ms: d.ms, text });
+      }
+    },
+    async openSettings() {
+      try {
+        this.settingsForm = await this.api('GET', '/api/settings');
+        this.settingsModal = true;
+      } catch (e) { alert(e.message); }
+    },
+    async saveSettings() {
+      this.settingsSaving = true;
+      try {
+        await this.api('PUT', '/api/settings', { values: this.settingsForm });
+        this.settingsModal = false;
+      } catch (e) { alert(e.message); } finally { this.settingsSaving = false; }
     },
     async sendFeedback(fb) {
       await this.api('POST', `/api/log/${this.matchResult.log_id}/feedback`, { feedback: fb });

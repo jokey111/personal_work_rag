@@ -1,11 +1,14 @@
 """FastAPI 主应用：认证 + 知识库/意图/QA CRUD + 匹配 + 复盘统计。"""
+import asyncio
 import json
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 
 import jwt
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
@@ -340,19 +343,88 @@ def import_markdown(body: MarkdownImportIn):
     return result
 
 
-# ---------- 匹配（两级 LLM 路由） ----------
+# ---------- 匹配 ----------
 class MatchIn(BaseModel):
     kb_id: int
     question: str
-    top_k: int = 3
+    top_k: int | None = None       # 覆盖 default_top_k
+    min_score: float | None = None  # 覆盖 match_min_score（仅本次）
 
 
-@app.post("/api/match", dependencies=[Depends(auth_dep)])
-async def match(body: MatchIn):
+# ---------- 匹配参数（settings 表运行时配置） ----------
+SETTING_SPECS = {  # key: (类型, 下限, 上限)
+    "match_min_score": (float, 0.0, 1.0),
+    "route_min_score": (float, 0.0, 1.0),
+    "keyword_match_min_score": (float, 0.0, 1.0),
+    "default_top_k": (int, 1, 10),
+}
+_SETTING_DEFAULTS = {
+    "match_min_score": lambda: config.MATCH_MIN_SCORE,
+    "route_min_score": lambda: config.ROUTE_MIN_SCORE,
+    "keyword_match_min_score": lambda: config.KEYWORD_MATCH_MIN_SCORE,
+    "default_top_k": lambda: 3,
+}
+
+
+def get_settings() -> dict:
+    rows = {r["key"]: r["value"] for r in
+            db.get_conn().execute("SELECT key, value FROM settings").fetchall()}
+    out = {}
+    for key, (typ, lo, hi) in SETTING_SPECS.items():
+        try:
+            v = typ(rows[key]) if key in rows else typ(_SETTING_DEFAULTS[key]())
+        except (TypeError, ValueError):
+            v = typ(_SETTING_DEFAULTS[key]())
+        out[key] = max(lo, min(hi, v))
+    return out
+
+
+@app.get("/api/settings", dependencies=[Depends(auth_dep)])
+def read_settings():
+    return get_settings()
+
+
+class SettingsIn(BaseModel):
+    values: dict[str, float | int]
+
+
+@app.put("/api/settings", dependencies=[Depends(auth_dep)])
+def update_settings(body: SettingsIn):
+    for key, value in body.values.items():
+        if key not in SETTING_SPECS:
+            raise HTTPException(400, f"未知参数: {key}")
+        typ, lo, hi = SETTING_SPECS[key]
+        try:
+            value = typ(value)
+        except (TypeError, ValueError):
+            raise HTTPException(400, f"{key} 值非法")
+        if not (lo <= value <= hi):
+            raise HTTPException(400, f"{key} 需在 {lo}~{hi} 之间")
+        with db.tx() as conn:
+            conn.execute(
+                "INSERT INTO settings(key, value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(value)))
+    return get_settings()
+
+
+# ---------- 匹配（两级 LLM 路由，流式过程 + 三层兜底） ----------
+async def _run_match(body: MatchIn, emit) -> dict:
+    """执行完整匹配；emit(stage, data) 用于流式上报进度，非流式传 no-op。
+
+    链路：Step1 路由 → Step2 该 L2 内精配 →（为空时）全库关键词二次兜底 → 记日志。
+    """
+    t0 = time.perf_counter()
     question = body.question.strip()
     if not question:
         raise HTTPException(400, "问题不能为空")
     conn = db.get_conn()
+    s = get_settings()
+    top_k = body.top_k or int(s["default_top_k"])
+    min_score = body.min_score if body.min_score is not None else s["match_min_score"]
+    route_min = s["route_min_score"]
+    kw_min = s["keyword_match_min_score"]
+    trace: dict = {"params": {"top_k": top_k, "match_min_score": min_score,
+                              "route_min_score": route_min, "keyword_match_min_score": kw_min}}
 
     l1_rows = [dict(r) for r in conn.execute(
         "SELECT * FROM intent_l1 WHERE kb_id=? ORDER BY sort_order, id", (body.kb_id,)).fetchall()]
@@ -362,44 +434,65 @@ async def match(body: MatchIn):
     if not l1_rows:
         raise HTTPException(400, "该知识库还没有意图分类，请先创建")
 
-    route_res = await llm.route(question, l1_rows, l2_rows)
+    # ---- Step 1 意图路由 ----
+    t1 = time.perf_counter()
+    route_res = await llm.route(question, l1_rows, l2_rows, route_min)
+    trace["route"] = {**route_res.detail, "ms": round((time.perf_counter() - t1) * 1000)}
+    l1_name = next((r["name"] for r in l1_rows if r["id"] == route_res.l1_id), None)
+    l2_name = next((r["name"] for r in l2_rows if r["id"] == route_res.l2_id), None)
+    await emit("route", {
+        "l1_id": route_res.l1_id, "l2_id": route_res.l2_id,
+        "l1_name": l1_name, "l2_name": l2_name,
+        "confidence": route_res.confidence, "reason": route_res.reason,
+        "degraded": route_res.degraded, **route_res.detail,
+    })
 
+    # ---- Step 2 候选精配（该 L2 内）----
     qas, matched = [], []
     degraded = route_res.degraded
     if route_res.l2_id:
         qas = [dict(r) for r in conn.execute(
             "SELECT * FROM qa WHERE l2_id=? AND status='active'", (route_res.l2_id,)).fetchall()]
     if qas:
-        m_res = await llm.match_candidates(question, qas)
-        matched = m_res.candidates
-        degraded = m_res.degraded
+        t2 = time.perf_counter()
+        m_res = await llm.match_candidates(question, qas, min_score=min_score, kw_min=kw_min)
+        matched, degraded = m_res.candidates, m_res.degraded
+        trace["match"] = {**m_res.detail, "ms": round((time.perf_counter() - t2) * 1000)}
+        await emit("match", trace["match"])
         if not matched and config.KEYWORD_FALLBACK:
-            # 该 L2 下没匹配到 → 全库关键词再兜底一次（兜底路由可能选错 L1，正确答案在别的分类里）
+            # 该 L2 下没匹配到（含低分被滤）→ 全库关键词再兜底（路由可能选错 L1）
+            t3 = time.perf_counter()
             all_qas = [dict(r) for r in conn.execute(
                 "SELECT qa.* FROM qa JOIN intent_l2 l2 ON qa.l2_id=l2.id "
                 "JOIN intent_l1 l1 ON l2.l1_id=l1.id WHERE l1.kb_id=? AND qa.status='active'",
                 (body.kb_id,)).fetchall()]
-            global_matched = llm.keyword_match_global(question, all_qas)
+            global_matched, g_detail = llm.keyword_match_global(question, all_qas, kw_min)
+            trace["fallback"] = {**g_detail, "trigger": "L2 内无达标候选",
+                                 "ms": round((time.perf_counter() - t3) * 1000)}
+            await emit("fallback", trace["fallback"])
             if global_matched:
                 qas, matched, degraded = all_qas, global_matched, True
-    elif not route_res.l2_id and config.KEYWORD_FALLBACK:
-        # 路由未定位 L2（LLM 不可用或低置信）→ 全库关键词兜底，尽量给候选而不是直接判"新问题"
+    elif config.KEYWORD_FALLBACK:
+        # 路由未定位 L2 → 全库关键词兜底，尽量给候选而不是直接判"新问题"
+        t3 = time.perf_counter()
         qas = [dict(r) for r in conn.execute(
             "SELECT qa.* FROM qa JOIN intent_l2 l2 ON qa.l2_id=l2.id "
             "JOIN intent_l1 l1 ON l2.l1_id=l1.id WHERE l1.kb_id=? AND qa.status='active'",
             (body.kb_id,)).fetchall()]
         if qas:
-            matched = llm.keyword_match_global(question, qas)
+            matched, g_detail = llm.keyword_match_global(question, qas, kw_min)
             degraded = True
+            trace["fallback"] = {**g_detail, "trigger": "路由未定位子意图",
+                                 "ms": round((time.perf_counter() - t3) * 1000)}
+            await emit("fallback", trace["fallback"])
+        else:
+            trace["fallback"] = {"engine": "none", "trigger": "路由未定位子意图且库内无 QA"}
 
-    l1_name = next((r["name"] for r in l1_rows if r["id"] == route_res.l1_id), None)
-    l2_name = next((r["name"] for r in l2_rows if r["id"] == route_res.l2_id), None)
-
-    qa_details = []
-    hit_ids = []
+    # ---- 命中处理与日志 ----
+    qa_details, hit_ids = [], []
     if matched:
         qa_map = {q["id"]: q for q in qas}
-        for c in matched[: body.top_k]:
+        for c in matched[:top_k]:
             qa = qa_map[c.qa_id]
             hit_ids.append(c.qa_id)
             qa_details.append({
@@ -424,14 +517,61 @@ async def match(body: MatchIn):
         )
         log_id = cur.lastrowid
 
-    return {
+    trace["total_ms"] = round((time.perf_counter() - t0) * 1000)
+    result = {
         "log_id": log_id,
         "route": {"l1_id": route_res.l1_id, "l2_id": route_res.l2_id, "l1_name": l1_name,
                   "l2_name": l2_name, "confidence": route_res.confidence,
                   "reason": route_res.reason, "degraded": degraded},
         "matched": qa_details,
         "source": source,
+        "trace": trace,
     }
+    await emit("done", result)
+    return result
+
+
+async def _noop(stage, data):
+    return None
+
+
+@app.post("/api/match", dependencies=[Depends(auth_dep)])
+async def match(body: MatchIn):
+    return await _run_match(body, emit=_noop)
+
+
+@app.post("/api/match/stream", dependencies=[Depends(auth_dep)])
+async def match_stream(body: MatchIn):
+    """SSE 流式匹配：依次推送 route / match / fallback / done 阶段事件。"""
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def emit(stage: str, data):
+        await queue.put("data: " + json.dumps({"stage": stage, "data": data}, ensure_ascii=False) + "\n\n")
+
+    async def worker():
+        try:
+            await _run_match(body, emit)
+        except HTTPException as e:
+            await emit("error", {"detail": e.detail})
+        except Exception as e:  # 未知异常也以 error 事件返回，避免前端无限等
+            await emit("error", {"detail": f"匹配失败: {e}"})
+        finally:
+            await queue.put(None)
+
+    task = asyncio.create_task(worker())
+
+    async def gen():
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                yield item
+        finally:
+            task.cancel()
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 class FeedbackIn(BaseModel):
