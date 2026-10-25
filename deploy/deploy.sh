@@ -4,6 +4,16 @@
 set -euo pipefail
 
 APP_DIR="/opt/personal_work_rag"
+APP_PORT="${APP_PORT:-8090}"   # 对外端口，默认 8090；80 被占可 APP_PORT=8080 bash deploy/deploy.sh
+
+echo "==> 0/6 检查端口 ${APP_PORT} 占用"
+if ss -ltn "( sport = :${APP_PORT} )" | grep -q LISTEN; then
+    echo "❌ 端口 ${APP_PORT} 已被占用（可能是 Docker demo 或其他服务），请换端口重试："
+    echo "   APP_PORT=<其他端口> bash deploy/deploy.sh"
+    ss -ltnp "sport = :${APP_PORT}" 2>/dev/null || true
+    exit 1
+fi
+
 echo "==> 1/6 安装系统依赖"
 if command -v apt-get >/dev/null; then
     apt-get update -y && apt-get install -y python3-venv nginx sqlite3
@@ -40,15 +50,17 @@ cp deploy/personal-rag.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now personal-rag
 
-echo "==> 5/6 Nginx"
+echo "==> 5/6 Nginx（对外端口 ${APP_PORT}）"
 rm -f /etc/nginx/sites-enabled/default
 cp deploy/nginx.conf /etc/nginx/sites-available/personal-rag.conf 2>/dev/null || cp deploy/nginx.conf /etc/nginx/conf.d/personal-rag.conf
 ln -sf /etc/nginx/sites-available/personal-rag.conf /etc/nginx/sites-enabled/personal-rag.conf 2>/dev/null || true
+sed -i "s/^    listen .*/    listen ${APP_PORT};/" /etc/nginx/sites-available/personal-rag.conf 2>/dev/null || sed -i "s/^    listen .*/    listen ${APP_PORT};/" /etc/nginx/conf.d/personal-rag.conf
 nginx -t && systemctl reload nginx
 
 echo "==> 6/6 每日备份 cron（SQLite → data/backups/，保留30天）"
 ( crontab -l 2>/dev/null || true; echo "0 4 * * * sqlite3 ${APP_DIR}/data/faq.db \".backup '${APP_DIR}/data/faq.db.bak'\" && find ${APP_DIR}/data -name 'faq.db.bak*' -mtime +30 -delete" ) | crontab -
 
 echo ""
-echo "✅ 部署完成：http://服务器IP/  （健康检查 /api/health）"
+echo "✅ 部署完成：http://服务器IP:${APP_PORT}/  （健康检查 http://服务器IP:${APP_PORT}/api/health）"
 echo "   数据库：${APP_DIR}/data/faq.db    配置：${APP_DIR}/.env"
+echo "   ⚠️ 云厂商安全组需放行 TCP ${APP_PORT} 入站"

@@ -43,7 +43,9 @@ bash deploy/deploy.sh
 vim .env && systemctl restart personal-rag
 ```
 
-访问 `http://服务器IP/`。有域名后：改 `deploy/nginx.conf` 的 server_name → `sudo certbot --nginx -d 你的域名`。
+访问 `http://服务器IP:8090/`（默认 8090 端口，避免与其他服务冲突；换端口：`APP_PORT=8080 bash deploy/deploy.sh`）。
+**记得在云厂商安全组放行对应 TCP 端口。**
+有域名后：改 `deploy/nginx.conf` 的 server_name → `sudo certbot --nginx -d 你的域名`。
 
 ## 匹配链路
 
