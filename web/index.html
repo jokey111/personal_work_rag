@@ -158,7 +158,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
             <b>{{ s.label }}</b>
             <span class="engine-badge" :class="s.engine">{{ s.engineLabel }}</span>
             <span style="flex:1"></span>
-            <span class="step-ms">{{ s.ms ? s.ms + ' ms' : '进行中…' }}</span>
+            <span class="step-ms">{{ s.ms != null ? s.ms + ' ms' : '进行中…' }}</span>
           </div>
           <div class="step-body" v-html="s.text"></div>
         </div>
@@ -472,9 +472,13 @@ createApp({
       const t = this.matchResult?.trace;
       if (!t) return '';
       const parts = [];
-      if (t.match?.engine === 'llm' && t.match?.dropped?.length) {
-        const d = t.match.dropped.map(x => `「${(x.question || x.id).slice(0, 25)}」${x.score}分`).join('、');
-        parts.push(`LLM 找到 ${t.match.raw_count} 个候选，但均低于阈值 ${t.match.min_score}（${d}）已过滤`);
+      if (t.match?.engine === 'llm') {
+        if (t.match.raw_count > 0 && t.match.dropped?.length) {
+          const d = t.match.dropped.map(x => `「${(x.question || x.id).slice(0, 25)}」${x.score}分`).join('、');
+          parts.push(`LLM 给出 ${t.match.raw_count} 个候选，最高 ${t.match.best_raw_score} 分 < 阈值 ${t.match.min_score}（${d}）已过滤`);
+        } else if (!t.match.raw_count) {
+          parts.push(`LLM 判断候选池 ${t.match.pool_size} 个问题均无法直接回答该提问（阈值 ${t.match.min_score}）`);
+        }
       }
       if (t.fallback?.best_score !== undefined) {
         parts.push(`全库关键词兜底：最高重合度 ${t.fallback.best_score} < 命中线 ${t.fallback.threshold}`);
@@ -551,7 +555,12 @@ createApp({
     },
     onMatchEvent(evt) {
       if (evt.stage === 'error') { this.matchErr = evt.data.detail || '匹配失败'; return; }
-      if (evt.stage === 'done') { this.matchResult = evt.data; return; }
+      if (evt.stage === 'done') {
+        // 兜底：所有阶段均已结束，补齐缺失的耗时，避免卡片停留在"进行中…"
+        this.matchSteps.forEach(s => { if (s.ms == null) s.ms = 0; });
+        this.matchResult = evt.data;
+        return;
+      }
       const d = evt.data;
       let label = '', engineLabel = '', text = '';
       if (evt.stage === 'route') {
@@ -565,9 +574,19 @@ createApp({
       } else if (evt.stage === 'match') {
         label = '② 候选精配';
         engineLabel = d.engine === 'llm' ? 'LLM 语义匹配' : (d.engine === 'keyword' ? '关键词兜底' : '无');
-        const kept = d.raw_count !== undefined ? `${d.raw_count} 个候选 → 达标 ${d.raw_count - (d.dropped?.length || 0)} 个` : `候选池 ${d.pool_size} 个`;
+        let kept;
+        if (d.engine === 'llm') {
+          if (d.raw_count === 0) kept = 'LLM 判断所有候选均无法直接回答，未给出候选';
+          else {
+            const ok = d.raw_count - (d.dropped?.length || 0);
+            kept = `LLM 给出 ${d.raw_count} 个候选 → 达标 ${ok} 个（阈值 ${d.min_score}）`;
+            if (ok === 0) kept += `，最高 ${d.best_raw_score} 分 < 阈值，全部过滤`;
+          }
+        } else {
+          kept = `最高重合度 ${d.best_score ?? '-'}（命中线 ${d.threshold ?? '-'}）`;
+        }
         const dropped = d.dropped?.length
-          ? `<br><span class="dim">已过滤（低于 ${d.min_score}）：${d.dropped.map(x => `「${(x.question || x.id).slice(0, 20)}」${x.score}分`).join('、')}</span>` : '';
+          ? `<br><span class="dim">已过滤：${d.dropped.map(x => `「${(x.question || x.id).slice(0, 20)}」${x.score}分`).join('、')}</span>` : '';
         text = `候选池 ${d.pool_size} 个 · ${kept}${dropped}`;
         this.matchSteps.push({ stage: evt.stage, label, engine: d.engine, engineLabel, ms: d.ms, text });
       } else if (evt.stage === 'fallback') {

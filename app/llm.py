@@ -30,7 +30,8 @@ MATCH_SYSTEM_PROMPT = (
     "1. 语义相近即算匹配：换了说法、部分重合、口语化表达都算\n"
     "2. 只有候选能**直接回答**目标问题时才算匹配，score 给 0.7 以上；"
     "仅话题沾边（同主题但回答不了这个问题，如问 ROI 却给'商业价值判断'）不算匹配，宁缺毋滥\n"
-    "3. 都不对口则 matched 输出 []，不要硬凑\n"
+    "3. 即使都不对口，也要输出语义最接近的候选并如实给低分（0.2~0.6）并说明为什么回答不了，"
+    "由系统按阈值过滤；仅当候选与问题毫无关联时才输出空列表\n"
     "4. 按 score 降序输出最多 3 条；只输出 JSON\n"
     '输出格式：{"matched":[{"id":1,"score":0.95,"reason":"..."}]}'
 )
@@ -189,7 +190,7 @@ async def route(question: str, l1_rows: list[dict], l2_rows: list[dict],
 
 async def match_candidates(question: str, qas: list[dict],
                            min_score: float | None = None,
-                           kw_min: float = 0.5) -> MatchResult:
+                           kw_min: float = 0.5, limit: int = 3) -> MatchResult:
     """Step 2：候选精配，输入为该 L2 下所有 active QA。"""
     if not qas:
         return MatchResult(detail={"engine": "none", "pool_size": 0})
@@ -214,8 +215,10 @@ async def match_candidates(question: str, qas: list[dict],
         dropped = [{"id": c.qa_id, "question": q_text.get(c.qa_id, ""),
                     "score": c.score, "reason": c.reason} for c in raw if c.score < min_score]
         detail = {"engine": "llm", "pool_size": len(qas), "min_score": min_score,
-                  "raw_count": len(raw), "dropped": dropped}
-        return MatchResult(kept[:3], detail=detail)
+                  "raw_count": len(raw),
+                  "best_raw_score": max((c.score for c in raw), default=None),
+                  "dropped": dropped}
+        return MatchResult(kept[:limit], detail=detail)
     except LLMError:
         if config.KEYWORD_FALLBACK:
             cands, detail = _keyword_match(question, qas, kw_min)

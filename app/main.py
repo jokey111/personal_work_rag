@@ -444,7 +444,7 @@ async def _run_match(body: MatchIn, emit) -> dict:
         "l1_id": route_res.l1_id, "l2_id": route_res.l2_id,
         "l1_name": l1_name, "l2_name": l2_name,
         "confidence": route_res.confidence, "reason": route_res.reason,
-        "degraded": route_res.degraded, **route_res.detail,
+        "degraded": route_res.degraded, "ms": trace["route"]["ms"], **route_res.detail,
     })
 
     # ---- Step 2 候选精配（该 L2 内）----
@@ -455,7 +455,7 @@ async def _run_match(body: MatchIn, emit) -> dict:
             "SELECT * FROM qa WHERE l2_id=? AND status='active'", (route_res.l2_id,)).fetchall()]
     if qas:
         t2 = time.perf_counter()
-        m_res = await llm.match_candidates(question, qas, min_score=min_score, kw_min=kw_min)
+        m_res = await llm.match_candidates(question, qas, min_score=min_score, kw_min=kw_min, limit=top_k)
         matched, degraded = m_res.candidates, m_res.degraded
         trace["match"] = {**m_res.detail, "ms": round((time.perf_counter() - t2) * 1000)}
         await emit("match", trace["match"])
