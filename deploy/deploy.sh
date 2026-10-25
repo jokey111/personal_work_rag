@@ -3,10 +3,14 @@
 # 用法：bash deploy/deploy.sh
 set -euo pipefail
 
-APP_DIR="/opt/personal_work_rag"
+APP_DIR="${APP_DIR:-/personal_work_rag}"   # 部署目录，默认根目录下；可 APP_DIR=/opt/xxx bash deploy/deploy.sh 覆盖
 APP_PORT="${APP_PORT:-8090}"   # 对外端口，默认 8090；80 被占可 APP_PORT=8080 bash deploy/deploy.sh
 
-echo "==> 0/6 检查端口 ${APP_PORT} 占用"
+echo "==> 0/6 检查部署目录与端口 ${APP_PORT} 占用"
+if [ ! -d "$APP_DIR" ]; then
+    echo "❌ 目录不存在：${APP_DIR}（请先 git clone 到该目录，或用 APP_DIR=xxx 指定实际目录）"
+    exit 1
+fi
 if ss -ltn "( sport = :${APP_PORT} )" | grep -q LISTEN; then
     echo "❌ 端口 ${APP_PORT} 已被占用（可能是 Docker demo 或其他服务），请换端口重试："
     echo "   APP_PORT=<其他端口> bash deploy/deploy.sh"
@@ -46,18 +50,18 @@ EOF
 fi
 
 echo "==> 4/6 systemd 服务"
-cp deploy/personal-rag.service /etc/systemd/system/
+sed "s#/personal_work_rag#${APP_DIR}#g" deploy/personal-rag.service > /etc/systemd/system/personal-rag.service
 systemctl daemon-reload
 systemctl enable --now personal-rag
 
 echo "==> 5/6 Nginx（对外端口 ${APP_PORT}）"
 rm -f /etc/nginx/sites-enabled/default
-cp deploy/nginx.conf /etc/nginx/sites-available/personal-rag.conf 2>/dev/null || cp deploy/nginx.conf /etc/nginx/conf.d/personal-rag.conf
+sed -e "s#root .*#root ${APP_DIR}/web;#" deploy/nginx.conf > /etc/nginx/sites-available/personal-rag.conf 2>/dev/null || sed -e "s#root .*#root ${APP_DIR}/web;#" deploy/nginx.conf > /etc/nginx/conf.d/personal-rag.conf
 ln -sf /etc/nginx/sites-available/personal-rag.conf /etc/nginx/sites-enabled/personal-rag.conf 2>/dev/null || true
 sed -i "s/^    listen .*/    listen ${APP_PORT};/" /etc/nginx/sites-available/personal-rag.conf 2>/dev/null || sed -i "s/^    listen .*/    listen ${APP_PORT};/" /etc/nginx/conf.d/personal-rag.conf
 nginx -t && systemctl reload nginx
 
-echo "==> 6/6 每日备份 cron（SQLite → data/backups/，保留30天）"
+echo "==> 6/6 每日备份 cron（SQLite，保留30天）"
 ( crontab -l 2>/dev/null || true; echo "0 4 * * * sqlite3 ${APP_DIR}/data/faq.db \".backup '${APP_DIR}/data/faq.db.bak'\" && find ${APP_DIR}/data -name 'faq.db.bak*' -mtime +30 -delete" ) | crontab -
 
 echo ""

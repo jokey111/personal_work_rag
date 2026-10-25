@@ -32,9 +32,9 @@ cp .env.example .env   # 填入 ADMIN_PASSWORD / JWT_SECRET / LLM_API_KEY
 ## 服务器部署（Ubuntu/CentOS）
 
 ```bash
-# 1. 服务器上拉代码到 /opt
-git clone https://github.com/<你的用户名>/personal_work_rag.git /opt/personal_work_rag
-cd /opt/personal_work_rag
+# 1. 服务器上拉代码到根目录下（默认 /personal_work_rag；自定义：APP_DIR=/opt/xxx bash deploy/deploy.sh）
+git clone https://github.com/jokey111/personal_work_rag.git /personal_work_rag
+cd /personal_work_rag
 
 # 2. 一键部署（装依赖、建 .env、起 systemd、配 Nginx、每日备份）
 bash deploy/deploy.sh
