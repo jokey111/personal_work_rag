@@ -161,7 +161,7 @@ def _keyword_match(question: str, qas: list[dict],
 
 
 def keyword_match_global(question: str, qas: list[dict],
-                         min_score: float = 0.5) -> tuple[list[MatchCandidate], dict]:
+                         min_score: float = 0.7) -> tuple[list[MatchCandidate], dict]:
     """路由失败或 L2 内无命中时的全库关键词兜底匹配。"""
     return _keyword_match(question, qas, min_score)
 
@@ -190,7 +190,7 @@ async def route(question: str, l1_rows: list[dict], l2_rows: list[dict],
 
 async def match_candidates(question: str, qas: list[dict],
                            min_score: float | None = None,
-                           kw_min: float = 0.5, limit: int = 3) -> MatchResult:
+                           kw_min: float = 0.7, limit: int = 3) -> MatchResult:
     """Step 2：候选精配，输入为该 L2 下所有 active QA。"""
     if not qas:
         return MatchResult(detail={"engine": "none", "pool_size": 0})

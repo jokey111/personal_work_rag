@@ -36,7 +36,7 @@ MATCH_MIN_SCORE = float(_env("MATCH_MIN_SCORE", "0.7"))
 # 默认阈值（可在页面「匹配参数」中运行时调整，存 settings 表；此处为首次默认值）
 ROUTE_MIN_SCORE = float(_env("ROUTE_MIN_SCORE", "0.3"))          # 关键词路由定位线
 MATCH_MIN_SCORE = float(_env("MATCH_MIN_SCORE", "0.7"))          # LLM 精配最低命中分
-KEYWORD_MATCH_MIN_SCORE = float(_env("KEYWORD_MATCH_MIN_SCORE", "0.5"))  # 关键词精配命中线
+KEYWORD_MATCH_MIN_SCORE = float(_env("KEYWORD_MATCH_MIN_SCORE", "0.7"))  # 关键词精配命中线
 
 # --- 备份保留天数 ---
 BACKUP_KEEP_DAYS = int(_env("BACKUP_KEEP_DAYS", "30"))
