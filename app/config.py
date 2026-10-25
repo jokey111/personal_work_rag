@@ -30,6 +30,8 @@ LLM_TIMEOUT_SECONDS = float(_env("LLM_TIMEOUT_SECONDS", "30"))
 
 # --- 兜底：LLM 不可用时走关键词匹配 ---
 KEYWORD_FALLBACK = _env("KEYWORD_FALLBACK", "1") == "1"
+# Step2 精配的最低命中分（低于此分的 LLM 候选视为"擦边"不返回，触发全库二次兜底）
+MATCH_MIN_SCORE = float(_env("MATCH_MIN_SCORE", "0.7"))
 
 # --- 备份保留天数 ---
 BACKUP_KEEP_DAYS = int(_env("BACKUP_KEEP_DAYS", "30"))
