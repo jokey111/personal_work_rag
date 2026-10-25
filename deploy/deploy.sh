@@ -56,6 +56,13 @@ systemctl enable --now personal-rag
 
 echo "==> 5/6 Nginx（对外端口 ${APP_PORT}）"
 rm -f /etc/nginx/sites-enabled/default
+# 家目录防护：Nginx(www-data) 需要能遍历到 /home/xxx，否则静态页 403
+case "$APP_DIR" in
+  /home/*) HOME_ROOT=$(echo "$APP_DIR" | cut -d/ -f1-3)   # /home/ubuntu
+           chmod o+x "$HOME_ROOT"
+           chmod -R o+rX "$APP_DIR/web"
+           echo "    已为 Nginx 开放家目录遍历权限（${HOME_ROOT} o+x）" ;;
+esac
 sed -e "s#root .*#root ${APP_DIR}/web;#" deploy/nginx.conf > /etc/nginx/sites-available/personal-rag.conf 2>/dev/null || sed -e "s#root .*#root ${APP_DIR}/web;#" deploy/nginx.conf > /etc/nginx/conf.d/personal-rag.conf
 ln -sf /etc/nginx/sites-available/personal-rag.conf /etc/nginx/sites-enabled/personal-rag.conf 2>/dev/null || true
 sed -i "s/^    listen .*/    listen ${APP_PORT};/" /etc/nginx/sites-available/personal-rag.conf 2>/dev/null || sed -i "s/^    listen .*/    listen ${APP_PORT};/" /etc/nginx/conf.d/personal-rag.conf

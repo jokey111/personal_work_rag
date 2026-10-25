@@ -32,15 +32,15 @@ cp .env.example .env   # 填入 ADMIN_PASSWORD / JWT_SECRET / LLM_API_KEY
 ## 服务器部署（Ubuntu/CentOS）
 
 ```bash
-# 1. 服务器上拉代码到根目录下（默认 /personal_work_rag；自定义：APP_DIR=/opt/xxx bash deploy/deploy.sh）
-git clone https://github.com/jokey111/personal_work_rag.git /personal_work_rag
-cd /personal_work_rag
+# 1. 服务器上拉代码（示例放家目录；任意目录均可，用 APP_DIR 告诉部署脚本即可）
+git clone https://github.com/jokey111/personal_work_rag.git ~/personal_work_rag
+cd ~/personal_work_rag
 
-# 2. 一键部署（装依赖、建 .env、起 systemd、配 Nginx、每日备份）
+# 2. 一键部署（装依赖、建 .env、起 systemd、配 Nginx、每日备份；家目录会自动开 Nginx 遍历权限）
 bash deploy/deploy.sh
 
 # 3. 编辑 .env 填入 LLM_API_KEY，重启
-vim .env && systemctl restart personal-rag
+vim .env && sudo systemctl restart personal-rag
 ```
 
 访问 `http://服务器IP:8090/`（默认 8090 端口，避免与其他服务冲突；换端口：`APP_PORT=8080 bash deploy/deploy.sh`）。
