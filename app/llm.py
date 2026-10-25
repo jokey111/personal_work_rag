@@ -28,8 +28,10 @@ MATCH_SYSTEM_PROMPT = (
     "你是面试 QA 匹配器。给定候选问题列表（含变体问法），选出与目标问题语义最接近的 1~3 条。\n"
     "规则：\n"
     "1. 语义相近即算匹配：换了说法、部分重合、口语化表达都算\n"
-    "2. 按 score 降序输出最多 3 条；都不接近则 matched 输出 []\n"
-    "3. 只输出 JSON\n"
+    "2. 只有候选能**直接回答**目标问题时才算匹配，score 给 0.7 以上；"
+    "仅话题沾边（同主题但回答不了这个问题，如问 ROI 却给'商业价值判断'）不算匹配，宁缺毋滥\n"
+    "3. 都不对口则 matched 输出 []，不要硬凑\n"
+    "4. 按 score 降序输出最多 3 条；只输出 JSON\n"
     '输出格式：{"matched":[{"id":1,"score":0.95,"reason":"..."}]}'
 )
 
@@ -190,6 +192,8 @@ async def match_candidates(question: str, qas: list[dict]) -> MatchResult:
                 continue
             if qa_id in valid:
                 out.append(MatchCandidate(qa_id, float(item.get("score", 0) or 0), str(item.get("reason", ""))))
+        # 过滤"擦边"低分候选：宁缺毋滥，空结果会触发上层全库二次兜底
+        out = [c for c in out if c.score >= config.MATCH_MIN_SCORE]
         out.sort(key=lambda c: -c.score)
         return MatchResult(out[:3])
     except LLMError:
