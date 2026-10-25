@@ -373,6 +373,15 @@ async def match(body: MatchIn):
         m_res = await llm.match_candidates(question, qas)
         matched = m_res.candidates
         degraded = m_res.degraded
+        if not matched and config.KEYWORD_FALLBACK:
+            # 该 L2 下没匹配到 → 全库关键词再兜底一次（兜底路由可能选错 L1，正确答案在别的分类里）
+            all_qas = [dict(r) for r in conn.execute(
+                "SELECT qa.* FROM qa JOIN intent_l2 l2 ON qa.l2_id=l2.id "
+                "JOIN intent_l1 l1 ON l2.l1_id=l1.id WHERE l1.kb_id=? AND qa.status='active'",
+                (body.kb_id,)).fetchall()]
+            global_matched = llm.keyword_match_global(question, all_qas)
+            if global_matched:
+                qas, matched, degraded = all_qas, global_matched, True
     elif not route_res.l2_id and config.KEYWORD_FALLBACK:
         # 路由未定位 L2（LLM 不可用或低置信）→ 全库关键词兜底，尽量给候选而不是直接判"新问题"
         qas = [dict(r) for r in conn.execute(
