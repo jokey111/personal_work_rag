@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>个人知识库 · FAQ 匹配</title>
+<script src="https://unpkg.com/vue@3.4.27/dist/vue.global.prod.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f1f5f9; color: #0f172a; }
+.login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+.login-card { background: #fff; padding: 36px 40px; border-radius: 16px; box-shadow: 0 8px 30px rgba(15,23,42,.08); width: 360px; }
+.login-card h2 { font-size: 20px; margin-bottom: 6px; }
+.login-card p { font-size: 13px; color: #64748b; margin-bottom: 22px; }
+.nav { background: #0f172a; color: #fff; padding: 0 24px; display: flex; align-items: center; gap: 4px; height: 56px; position: sticky; top: 0; z-index: 10; }
+.nav .brand { font-weight: 700; margin-right: 20px; font-size: 15px; }
+.nav button.page-btn { background: none; border: none; color: #cbd5e1; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+.nav button.page-btn.active, .nav button.page-btn:hover { background: #1e293b; color: #fff; }
+.nav .spacer { flex: 1; }
+.nav .kb-select { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 8px; padding: 6px 10px; font-size: 13px; max-width: 180px; }
+.nav .logout { background: none; border: 1px solid #475569; color: #94a3b8; border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 13px; }
+.container { max-width: 1080px; margin: 24px auto; padding: 0 16px; }
+.card { background: #fff; border-radius: 14px; padding: 20px 22px; box-shadow: 0 2px 10px rgba(15,23,42,.05); margin-bottom: 16px; }
+.btn { background: #4f46e5; color: #fff; border: none; border-radius: 8px; padding: 9px 18px; font-size: 14px; cursor: pointer; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn.ghost { background: #fff; color: #475569; border: 1px solid #cbd5e1; }
+.btn.sm { padding: 5px 10px; font-size: 12.5px; }
+.btn.danger { background: #dc2626; }
+.input, textarea, select { width: 100%; border: 1px solid #cbd5e1; border-radius: 8px; padding: 9px 12px; font-size: 14px; font-family: inherit; background: #fff; }
+.input:focus, textarea:focus { outline: 2px solid #c7d2fe; border-color: #818cf8; }
+label.field { display: block; font-size: 13px; color: #475569; margin-bottom: 12px; }
+label.field span { display: block; margin-bottom: 5px; font-weight: 600; }
+.ask-box { display: flex; gap: 10px; margin-top: 4px; }
+.ask-box textarea { flex: 1; resize: vertical; min-height: 64px; }
+.route-chain { background: #eef2ff; border: 1px solid #c7d2fe; color: #3730a3; border-radius: 10px; padding: 10px 14px; font-size: 13.5px; margin: 14px 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.route-chain .degraded { color: #b45309; background: #fef3c7; border-radius: 6px; padding: 1px 8px; font-size: 12px; }
+.candidate { border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; }
+.candidate .head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.candidate .q { font-weight: 700; font-size: 14.5px; }
+.candidate .score { color: #4f46e5; font-size: 13px; white-space: nowrap; }
+.candidate .meta { font-size: 12px; color: #94a3b8; margin-top: 2px; }
+.candidate details { margin-top: 8px; }
+.candidate summary { cursor: pointer; font-size: 13px; color: #4f46e5; }
+.candidate .body { font-size: 13.5px; color: #334155; margin-top: 8px; white-space: pre-wrap; line-height: 1.7; }
+.candidate .actions { margin-top: 10px; display: flex; gap: 8px; align-items: center; }
+.fb-useful { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
+.fb-useless { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
+.empty-new { background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; border-radius: 10px; padding: 12px 14px; font-size: 13.5px; }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.stat { background: #fff; border-radius: 12px; padding: 16px; text-align: center; }
+.stat .num { font-size: 26px; font-weight: 800; color: #1e293b; }
+.stat .lbl { font-size: 12.5px; color: #64748b; margin-top: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid #e2e8f0; }
+th { color: #64748b; font-weight: 600; background: #f8fafc; }
+.tree-col { background: #fff; border-radius: 14px; padding: 14px; box-shadow: 0 2px 10px rgba(15,23,42,.05); }
+.l1-item { margin-bottom: 6px; }
+.l1-head { display: flex; align-items: center; gap: 6px; padding: 7px 8px; border-radius: 8px; font-weight: 700; font-size: 13.5px; cursor: pointer; }
+.l1-head:hover { background: #f1f5f9; }
+.l1-head .arrow { transition: .15s; font-size: 11px; color: #94a3b8; }
+.l1-head .arrow.open { transform: rotate(90deg); }
+.l2-item { display: flex; justify-content: space-between; align-items: center; padding: 5px 8px 5px 26px; border-radius: 8px; font-size: 13px; color: #475569; cursor: pointer; }
+.l2-item:hover { background: #f1f5f9; }
+.l2-item.active { background: #eef2ff; color: #3730a3; font-weight: 600; }
+.l2-item .cnt { font-size: 11.5px; color: #94a3b8; }
+.icon-btn { background: none; border: none; cursor: pointer; color: #94a3b8; font-size: 14px; padding: 2px 5px; border-radius: 5px; }
+.icon-btn:hover { background: #e2e8f0; color: #334155; }
+.manage-grid { display: grid; grid-template-columns: 290px 1fr; gap: 16px; align-items: start; }
+@media (max-width: 800px) { .manage-grid { grid-template-columns: 1fr; } }
+.drawer-mask { position: fixed; inset: 0; background: rgba(15,23,42,.35); z-index: 20; display: flex; justify-content: flex-end; }
+.drawer { background: #fff; width: min(560px, 92vw); height: 100%; overflow-y: auto; padding: 24px; }
+.drawer h3 { margin-bottom: 16px; font-size: 17px; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+.form-grid .full { grid-column: 1 / -1; }
+.modal-mask { position: fixed; inset: 0; background: rgba(15,23,42,.35); z-index: 30; display: flex; align-items: center; justify-content: center; }
+.modal { background: #fff; border-radius: 14px; padding: 22px 24px; width: min(440px, 92vw); }
+.bubble-chart .row { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
+.bubble-chart .bar-wrap { flex: 1; background: #f1f5f9; border-radius: 6px; height: 18px; overflow: hidden; }
+.bubble-chart .bar { height: 100%; background: #6366f1; border-radius: 6px; }
+.err { color: #dc2626; font-size: 13px; margin-top: 8px; }
+.ok-tip { color: #16a34a; font-size: 13px; }
+.section-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+.section-title h3 { font-size: 16px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- 登录 -->
+  <div v-if="!token" class="login-wrap">
+    <div class="login-card">
+      <h2>个人知识库</h2>
+      <p>面试 FAQ · 意图路由匹配 · 复盘闭环</p>
+      <label class="field"><span>用户名</span><input class="input" v-model="loginForm.username" @keyup.enter="doLogin"></label>
+      <label class="field"><span>密码</span><input class="input" type="password" v-model="loginForm.password" @keyup.enter="doLogin"></label>
+      <div class="err" v-if="loginErr">{{ loginErr }}</div>
+      <button class="btn" style="width:100%;margin-top:6px" @click="doLogin" :disabled="loggingIn">{{ loggingIn ? '登录中…' : '登录' }}</button>
+    </div>
+  </div>
+
+  <template v-else>
+  <!-- 顶部导航 -->
+  <div class="nav">
+    <span class="brand">📘 个人知识库</span>
+    <button class="page-btn" :class="{active: page==='match'}" @click="page='match'">匹配</button>
+    <button class="page-btn" :class="{active: page==='manage'}" @click="goManage">题库管理</button>
+    <button class="page-btn" :class="{active: page==='stats'}" @click="goStats">复盘统计</button>
+    <span class="spacer"></span>
+    <select class="kb-select" v-model="kbId" @change="onKbSwitch">
+      <option v-for="k in kbs" :key="k.id" :value="k.id">{{ k.name }}（{{ k.qa_count }}题）</option>
+    </select>
+    <button class="page-btn" @click="kbModal=true">＋库</button>
+    <button class="logout" @click="logout">退出</button>
+  </div>
+
+  <div class="container">
+    <!-- 匹配页 -->
+    <div v-if="page==='match'">
+      <div class="card">
+        <div class="section-title"><h3>面试官问了你什么？</h3><span style="font-size:12px;color:#94a3b8">当前库：{{ currentKb?.name }}</span></div>
+        <div class="ask-box">
+          <textarea v-model="question" placeholder="输入面试官的原话，例如：你的项目里检索不准是怎么优化的？"></textarea>
+          <button class="btn" @click="doMatch" :disabled="matching || !question.trim()">{{ matching ? '匹配中…' : '匹配' }}</button>
+        </div>
+        <div class="err" v-if="matchErr">{{ matchErr }}</div>
+      </div>
+
+      <div v-if="matchResult" class="card">
+        <div class="route-chain">
+          <b>路由</b>
+          <span>{{ matchResult.route.l1_name || '未定位大类' }} ▸ {{ matchResult.route.l2_name || '未定位子意图' }}</span>
+          <span>confidence {{ matchResult.route.confidence }}</span>
+          <span v-if="matchResult.route.degraded" class="degraded">关键词兜底（LLM 不可用）</span>
+          <span style="color:#6370a3;font-size:12px">{{ matchResult.route.reason }}</span>
+        </div>
+
+        <div v-for="c in matchResult.matched" :key="c.qa_id" class="candidate">
+          <div class="head"><span class="q">{{ c.question }}</span><span class="score">score {{ c.score }}</span></div>
+          <div class="meta">被问 {{ c.hit_count }} 次 · 质量自评 {{ c.quality }}/5 · {{ c.reason }}</div>
+          <details>
+            <summary>展开答案 / 追问 / STAR 要点</summary>
+            <div class="body"><b>答案</b>\n{{ c.answer }}</div>
+            <div class="body" v-if="c.follow_ups"><b>常见追问</b>\n{{ c.follow_ups }}</div>
+            <div class="body" v-if="c.star_hint"><b>STAR 要点</b>\n{{ c.star_hint }}</div>
+          </details>
+          <div class="actions">
+            <button class="btn sm fb-useful" @click="sendFeedback('useful')">👍 有用</button>
+            <button class="btn sm fb-useless" @click="sendFeedback('useless')">👎 没用</button>
+            <span class="ok-tip" v-if="feedbackDone[c.qa_id]">已记录</span>
+          </div>
+        </div>
+
+        <div v-if="matchResult.source==='new'" class="empty-new">
+          题库还没有覆盖这个问题，已记录到<b>新问题池</b>（复盘统计页可一键转正为 QA）。
+        </div>
+      </div>
+    </div>
+
+    <!-- 题库管理页 -->
+    <div v-if="page==='manage'" class="manage-grid">
+      <div class="tree-col">
+        <div class="section-title"><h3>意图树</h3><button class="btn sm ghost" @click="openL1Edit(null)">＋大类</button></div>
+        <div v-for="l1 in tree" :key="l1.id" class="l1-item">
+          <div class="l1-head" @click="toggleL1(l1.id)">
+            <span class="arrow" :class="{open: expanded[l1.id]}">▶</span>
+            <span style="flex:1">{{ l1.name }}</span>
+            <span class="cnt">{{ (l1.children||[]).length }}子</span>
+            <button class="icon-btn" @click.stop="openL1Edit(l1)">✏️</button>
+            <button class="icon-btn" @click.stop="delL1(l1)">🗑</button>
+          </div>
+          <div v-show="expanded[l1.id]">
+            <div v-for="l2 in l1.children" :key="l2.id" class="l2-item" :class="{active: filterL2===l2.id}" @click="filterL1=l1.id; filterL2=l2.id; loadQas()">
+              <span>{{ l2.name }}</span>
+              <span style="display:flex;gap:2px;align-items:center">
+                <span class="cnt">{{ l2.qa_count }}题</span>
+                <button class="icon-btn" @click.stop="openL2Edit(l2, l1)">✏️</button>
+                <button class="icon-btn" @click.stop="delL2(l2)">🗑</button>
+              </span>
+            </div>
+            <div class="l2-item" @click="openL2Edit(null, l1)" style="color:#6366f1">＋ 子意图</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">
+          <h3>QA 列表 <span style="font-size:12px;color:#94a3b8;font-weight:400">{{ filterL2 ? '已筛选子意图' : '全部/按大类' }}</span></h3>
+          <div style="display:flex;gap:8px">
+            <input class="input" style="width:180px" placeholder="🔍 关键词" v-model="keyword" @keyup.enter="filterL2=null; loadQas()">
+            <button class="btn sm ghost" @click="filterL1=null;filterL2=null;keyword='';loadQas()">重置</button>
+            <button class="btn sm" @click="openQaEdit(null)">＋ 新增QA</button>
+          </div>
+        </div>
+        <table>
+          <thead><tr><th>问题</th><th>分类</th><th>被问</th><th>质量</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr v-for="qa in qas" :key="qa.id">
+              <td style="max-width:340px">{{ qa.question }}</td>
+              <td style="white-space:nowrap;font-size:12.5px">{{ qa.l1_name }} ▸ {{ qa.l2_name }}</td>
+              <td>{{ qa.hit_count }}</td>
+              <td>{{ qa.quality }}</td>
+              <td>{{ qa.status }}</td>
+              <td style="white-space:nowrap">
+                <button class="icon-btn" @click="openQaEdit(qa)">✏️</button>
+                <button class="icon-btn" @click="delQa(qa)">🗑</button>
+              </td>
+            </tr>
+            <tr v-if="!qas.length"><td colspan="6" style="color:#94a3b8;text-align:center;padding:24px">暂无 QA，点击右上角新增</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 复盘统计页 -->
+    <div v-if="page==='stats'">
+      <div class="stat-grid">
+        <div class="stat"><div class="num">{{ overview.qa_total }}</div><div class="lbl">题库总数</div></div>
+        <div class="stat"><div class="num">{{ overview.query_total }}</div><div class="lbl">累计提问</div></div>
+        <div class="stat"><div class="num" style="color:#16a34a">{{ overview.hit }}</div><div class="lbl">命中次数</div></div>
+        <div class="stat"><div class="num" style="color:#ea580c">{{ overview.new }}</div><div class="lbl">未命中（新问题）</div></div>
+        <div class="stat"><div class="num">{{ overview.hit_rate==null ? '—' : (overview.hit_rate*100).toFixed(0)+'%' }}</div><div class="lbl">命中率</div></div>
+      </div>
+      <div class="card bubble-chart">
+        <div class="section-title"><h3>🔥 高频 Top10（面试重点风向标）</h3></div>
+        <div v-for="h in hot" :key="h.id" class="row">
+          <span style="width:44px;font-size:12px;color:#6366f1;font-weight:700">{{ h.hit_count }}次</span>
+          <div class="bar-wrap"><div class="bar" :style="{width: (h.hit_count / hot[0].hit_count * 100) + '%'}"></div></div>
+          <span style="width:46%;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ h.question }} <span style="color:#94a3b8">（{{ h.l2_name }}）</span></span>
+        </div>
+        <div v-if="!hot.length" style="color:#94a3b8;font-size:13px">还没有命中记录，去匹配页试一次</div>
+      </div>
+      <div class="card">
+        <div class="section-title"><h3>🆕 新问题池（未命中，待转正）</h3></div>
+        <table>
+          <thead><tr><th>问题原话</th><th>时间</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr v-for="u in unmatched" :key="u.id">
+              <td>{{ u.question }}</td>
+              <td style="white-space:nowrap;color:#94a3b8;font-size:12.5px">{{ u.created_at }}</td>
+              <td><button class="btn sm" @click="openFromLog(u)">转正为 QA</button></td>
+            </tr>
+            <tr v-if="!unmatched.length"><td colspan="3" style="color:#94a3b8;text-align:center;padding:20px">池子是空的，覆盖率 100% 🎉</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  </template>
+
+  <!-- 新建知识库 -->
+  <div v-if="kbModal" class="modal-mask" @click.self="kbModal=false">
+    <div class="modal">
+      <h3 style="margin-bottom:14px">{{ kbEditId ? '编辑知识库' : '新建知识库' }}</h3>
+      <label class="field"><span>名称</span><input class="input" v-model="kbForm.name" placeholder="如：课程知识库"></label>
+      <label class="field"><span>描述</span><input class="input" v-model="kbForm.description"></label>
+      <label class="field"><span><input type="checkbox" v-model="kbForm.is_default"> 设为默认库</span></label>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button class="btn ghost" @click="kbModal=false">取消</button>
+        <button class="btn" @click="saveKb">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- L1 / L2 编辑 -->
+  <div v-if="l1Modal || l2Modal" class="modal-mask" @click.self="l1Modal=l2Modal=false">
+    <div class="modal">
+      <h3 style="margin-bottom:14px">{{ l1Modal ? (l1Form.id ? '编辑大类' : '新增大类') : (l2Form.id ? '编辑子意图' : '新增子意图') }}</h3>
+      <label class="field" v-if="l1Modal"><span>大类名称</span><input class="input" v-model="l1Form.name" placeholder="如：技术原理"></label>
+      <template v-if="l2Modal">
+        <label class="field"><span>所属大类</span>
+          <select class="input" v-model="l2Form.l1_id"><option v-for="l1 in tree" :key="l1.id" :value="l1.id">{{ l1.name }}</option></select>
+        </label>
+        <label class="field"><span>子意图名称</span><input class="input" v-model="l2Form.name" placeholder="如：RAG 检索优化"></label>
+      </template>
+      <label class="field"><span>描述 / 典型问题示例（给 LLM 路由看，写得越清楚分类越准）</span>
+        <textarea class="input" rows="3" v-model="(l1Modal ? l1Form : l2Form).description"></textarea>
+      </label>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button class="btn ghost" @click="l1Modal=l2Modal=false">取消</button>
+        <button class="btn" @click="saveIntent">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- QA 抽屉 -->
+  <div v-if="qaModal" class="drawer-mask" @click.self="qaModal=false">
+    <div class="drawer">
+      <h3>{{ qaForm.id ? '编辑 QA' : '新增 QA' }}</h3>
+      <div class="form-grid">
+        <label class="field full"><span>所属子意图</span>
+          <select class="input" v-model="qaForm.l2_id">
+            <template v-for="l1 in tree" :key="l1.id">
+              <option v-for="l2 in l1.children" :key="l2.id" :value="l2.id">{{ l1.name }} ▸ {{ l2.name }}</option>
+            </template>
+          </select>
+        </label>
+        <label class="field full"><span>标准问题 *</span><input class="input" v-model="qaForm.question"></label>
+        <label class="field full"><span>变体问法（换行分隔，泛化匹配关键）</span><textarea class="input" rows="2" v-model="qaForm.question_aliases"></textarea></label>
+        <label class="field full"><span>答案 *</span><textarea class="input" rows="6" v-model="qaForm.answer"></textarea></label>
+        <label class="field full"><span>常见追问与应答</span><textarea class="input" rows="3" v-model="qaForm.follow_ups"></textarea></label>
+        <label class="field full"><span>STAR 要点 / 口播提醒</span><textarea class="input" rows="2" v-model="qaForm.star_hint"></textarea></label>
+        <label class="field"><span>状态</span>
+          <select class="input" v-model="qaForm.status"><option value="active">active</option><option value="draft">draft</option><option value="archived">archived</option></select>
+        </label>
+        <label class="field"><span>质量自评（1-5）</span><input class="input" type="number" min="1" max="5" v-model.number="qaForm.quality"></label>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px">
+        <button class="btn ghost" @click="qaModal=false">取消</button>
+        <button class="btn" @click="saveQa">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 新问题转正抽屉 -->
+  <div v-if="fromLogModal" class="drawer-mask" @click.self="fromLogModal=false">
+    <div class="drawer">
+      <h3>新问题转正为 QA</h3>
+      <p style="font-size:13px;color:#64748b;margin-bottom:14px">原话：{{ fromLogForm._original }}</p>
+      <label class="field"><span>标准化问题（默认用原话，可改写）</span><input class="input" v-model="fromLogForm.question"></label>
+      <label class="field"><span>所属子意图</span>
+        <select class="input" v-model="fromLogForm.l2_id">
+          <template v-for="l1 in tree" :key="l1.id">
+            <option v-for="l2 in l1.children" :key="l2.id" :value="l2.id">{{ l1.name }} ▸ {{ l2.name }}</option>
+          </template>
+        </select>
+      </label>
+      <label class="field"><span>答案 *</span><textarea class="input" rows="6" v-model="fromLogForm.answer"></textarea></label>
+      <label class="field"><span>变体问法（换行分隔）</span><textarea class="input" rows="2" v-model="fromLogForm.question_aliases"></textarea></label>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button class="btn ghost" @click="fromLogModal=false">取消</button>
+        <button class="btn" @click="saveFromLog" :disabled="!fromLogForm.answer.trim()">转正</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const { createApp } = Vue;
+const API = '';
+createApp({
+  data() {
+    return {
+      token: localStorage.getItem('token') || '',
+      loginForm: { username: '', password: '' }, loginErr: '', loggingIn: false,
+      page: 'match',
+      kbs: [], kbId: null,
+      question: '', matching: false, matchErr: '', matchResult: null, feedbackDone: {},
+      tree: [], expanded: {},
+      qas: [], filterL1: null, filterL2: null, keyword: '',
+      overview: {}, hot: [], unmatched: [],
+      kbModal: false, kbEditId: null, kbForm: { name: '', description: '', is_default: false },
+      l1Modal: false, l2Modal: false,
+      l1Form: { id: null, name: '', description: '' },
+      l2Form: { id: null, l1_id: null, name: '', description: '' },
+      qaModal: false, qaForm: {},
+      fromLogModal: false, fromLogForm: {},
+    };
+  },
+  computed: {
+    currentKb() { return this.kbs.find(k => k.id === this.kbId); },
+  },
+  async mounted() {
+    if (this.token) await this.initData();
+  },
+  methods: {
+    async api(method, url, body) {
+      const opt = { method, headers: { 'Authorization': 'Bearer ' + this.token, 'Content-Type': 'application/json' } };
+      if (body !== undefined) opt.body = JSON.stringify(body);
+      const resp = await fetch(API + url, opt);
+      if (resp.status === 401) { this.token = ''; localStorage.removeItem('token'); throw new Error('登录已过期'); }
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.detail || ('请求失败 ' + resp.status));
+      return data;
+    },
+    async doLogin() {
+      this.loggingIn = true; this.loginErr = '';
+      try {
+        const r = await fetch(API + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(this.loginForm) });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || '登录失败');
+        this.token = data.token; localStorage.setItem('token', data.token);
+        await this.initData();
+      } catch (e) { this.loginErr = e.message; } finally { this.loggingIn = false; }
+    },
+    logout() { this.token = ''; localStorage.removeItem('token'); this.page = 'match'; },
+    async initData() {
+      await this.loadKbs();
+      await this.loadTree();
+    },
+    async loadKbs() {
+      this.kbs = await this.api('GET', '/api/kbs');
+      const saved = parseInt(localStorage.getItem('kbId'));
+      const found = this.kbs.find(k => k.id === saved);
+      this.kbId = found ? found.id : (this.kbs.find(k => k.is_default) || this.kbs[0])?.id;
+    },
+    onKbSwitch() { localStorage.setItem('kbId', this.kbId); this.loadTree(); this.qas = []; },
+    async loadTree() {
+      if (!this.kbId) return;
+      this.tree = await this.api('GET', '/api/intents?kb_id=' + this.kbId);
+      this.tree.forEach(l1 => { if (this.expanded[l1.id] === undefined) this.expanded[l1.id] = true; });
+    },
+    toggleL1(id) { this.expanded[id] = !this.expanded[id]; },
+    async doMatch() {
+      this.matching = true; this.matchErr = ''; this.matchResult = null; this.feedbackDone = {};
+      try {
+        this.matchResult = await this.api('POST', '/api/match', { kb_id: this.kbId, question: this.question });
+      } catch (e) { this.matchErr = e.message; } finally { this.matching = false; }
+    },
+    async sendFeedback(fb) {
+      await this.api('POST', `/api/log/${this.matchResult.log_id}/feedback`, { feedback: fb });
+      this.matchResult.matched.forEach(c => this.feedbackDone[c.qa_id] = true);
+    },
+    goManage() { this.page = 'manage'; this.loadTree(); this.loadQas(); },
+    goStats() { this.page = 'stats'; this.loadStats(); },
+    async loadQas() {
+      let url = `/api/qas?kb_id=${this.kbId}`;
+      if (this.filterL2) url += `&l2_id=${this.filterL2}`;
+      else if (this.filterL1) url += `&l1_id=${this.filterL1}`;
+      if (this.keyword) url += `&q=${encodeURIComponent(this.keyword)}`;
+      this.qas = await this.api('GET', url);
+    },
+    async loadStats() {
+      const [ov, hot, um] = await Promise.all([
+        this.api('GET', `/api/stats/overview?kb_id=${this.kbId}`),
+        this.api('GET', `/api/stats/hot?kb_id=${this.kbId}`),
+        this.api('GET', `/api/stats/unmatched?kb_id=${this.kbId}`),
+      ]);
+      this.overview = ov; this.hot = hot; this.unmatched = um;
+    },
+    openKbNew() { this.kbEditId = null; this.kbForm = { name: '', description: '', is_default: false }; this.kbModal = true; },
+    async saveKb() {
+      try {
+        if (this.kbEditId) await this.api('PUT', `/api/kbs/${this.kbEditId}`, this.kbForm);
+        else await this.api('POST', '/api/kbs', this.kbForm);
+        this.kbModal = false; await this.loadKbs();
+      } catch (e) { alert(e.message); }
+    },
+    openL1Edit(l1) {
+      this.l1Form = l1 ? { id: l1.id, name: l1.name, description: l1.description || '' } : { id: null, name: '', description: '' };
+      this.l1Modal = true;
+    },
+    openL2Edit(l2, l1) {
+      this.l2Form = l2 ? { id: l2.id, l1_id: l2.l1_id, name: l2.name, description: l2.description || '' } : { id: null, l1_id: l1.id, name: '', description: '' };
+      this.l2Modal = true;
+    },
+    async saveIntent() {
+      try {
+        if (this.l1Modal) {
+          const body = { kb_id: this.kbId, name: this.l1Form.name, description: this.l1Form.description };
+          if (this.l1Form.id) await this.api('PUT', `/api/intents/l1/${this.l1Form.id}`, body);
+          else await this.api('POST', '/api/intents/l1', body);
+          this.l1Modal = false;
+        } else {
+          const body = { l1_id: this.l2Form.l1_id, name: this.l2Form.name, description: this.l2Form.description };
+          if (this.l2Form.id) await this.api('PUT', `/api/intents/l2/${this.l2Form.id}`, body);
+          else await this.api('POST', '/api/intents/l2', body);
+          this.l2Modal = false;
+        }
+        await this.loadTree(); this.loadQas();
+      } catch (e) { alert(e.message); }
+    },
+    async delL1(l1) { if (confirm(`删除大类「${l1.name}」及其所有子意图和 QA？不可恢复！`)) { await this.api('DELETE', `/api/intents/l1/${l1.id}`); this.loadTree(); this.loadQas(); } },
+    async delL2(l2) { if (confirm(`删除子意图「${l2.name}」及其 QA？不可恢复！`)) { await this.api('DELETE', `/api/intents/l2/${l2.id}`); this.loadTree(); this.loadQas(); } },
+    openQaEdit(qa) {
+      this.qaForm = qa ? { ...qa } : { l2_id: this.filterL2 || (this.tree[0]?.children?.[0]?.id ?? null), question: '', question_aliases: '', answer: '', follow_ups: '', star_hint: '', status: 'active', quality: 3 };
+      this.qaModal = true;
+    },
+    async saveQa() {
+      try {
+        const body = { l2_id: this.qaForm.l2_id, question: this.qaForm.question, question_aliases: this.qaForm.question_aliases, answer: this.qaForm.answer, follow_ups: this.qaForm.follow_ups, star_hint: this.qaForm.star_hint, status: this.qaForm.status, quality: this.qaForm.quality };
+        if (this.qaForm.id) await this.api('PUT', `/api/qas/${this.qaForm.id}`, body);
+        else await this.api('POST', '/api/qas', body);
+        this.qaModal = false; this.loadQas(); this.loadTree();
+      } catch (e) { alert(e.message); }
+    },
+    async delQa(qa) { if (confirm(`删除 QA「${qa.question}」？`)) { await this.api('DELETE', `/api/qas/${qa.id}`); this.loadQas(); this.loadTree(); } },
+    openFromLog(u) {
+      this.fromLogForm = { log_id: u.id, question: u.question, l2_id: this.tree[0]?.children?.[0]?.id ?? null, answer: '', question_aliases: '', _original: u.question };
+      this.fromLogModal = true;
+    },
+    async saveFromLog() {
+      try {
+        await this.api('POST', `/api/qas/from_log/${this.fromLogForm.log_id}`, {
+          l2_id: this.fromLogForm.l2_id, question: this.fromLogForm.question, answer: this.fromLogForm.answer, question_aliases: this.fromLogForm.question_aliases,
+        });
+        this.fromLogModal = false; this.loadStats(); this.loadTree();
+      } catch (e) { alert(e.message); }
+    },
+  },
+}).mount('#app');
+</script>
+</body>
+</html>

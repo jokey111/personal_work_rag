@@ -1,0 +1,15 @@
+[Unit]
+Description=personal_work_rag FastAPI service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/personal_work_rag
+EnvironmentFile=/opt/personal_work_rag/.env
+ExecStart=/opt/personal_work_rag/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
