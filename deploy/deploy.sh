@@ -66,7 +66,13 @@ esac
 sed -e "s#root .*#root ${APP_DIR}/web;#" deploy/nginx.conf > /etc/nginx/sites-available/personal-rag.conf 2>/dev/null || sed -e "s#root .*#root ${APP_DIR}/web;#" deploy/nginx.conf > /etc/nginx/conf.d/personal-rag.conf
 ln -sf /etc/nginx/sites-available/personal-rag.conf /etc/nginx/sites-enabled/personal-rag.conf 2>/dev/null || true
 sed -i "s/^    listen .*/    listen ${APP_PORT};/" /etc/nginx/sites-available/personal-rag.conf 2>/dev/null || sed -i "s/^    listen .*/    listen ${APP_PORT};/" /etc/nginx/conf.d/personal-rag.conf
-nginx -t && systemctl reload nginx
+# nginx 可能因 80 端口被占而处于 failed 状态（如 Docker demo）：先试 reload，不行就 start
+if nginx -t 2>/dev/null; then
+    systemctl reload nginx 2>/dev/null || systemctl start nginx
+    systemctl enable nginx >/dev/null 2>&1 || true
+else
+    nginx -t; exit 1
+fi
 
 echo "==> 6/6 每日备份 cron（SQLite，保留30天）"
 ( crontab -l 2>/dev/null || true; echo "0 4 * * * sqlite3 ${APP_DIR}/data/faq.db \".backup '${APP_DIR}/data/faq.db.bak'\" && find ${APP_DIR}/data -name 'faq.db.bak*' -mtime +30 -delete" ) | crontab -
