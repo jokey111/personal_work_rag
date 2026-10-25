@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
-from . import config, db, llm
+from . import config, db, llm, md_import
 
 app = FastAPI(title="personal_work_rag", version="0.2.0")
 app.add_middleware(
@@ -319,6 +319,27 @@ def export_qas(kb_id: int):
     return list_qas(kb_id=kb_id)
 
 
+class MarkdownImportIn(BaseModel):
+    kb_id: int
+    markdown: str
+    dry_run: bool = False  # True 只解析校验不落库
+
+
+@app.post("/api/qas/import-markdown", dependencies=[Depends(auth_dep)])
+def import_markdown(body: MarkdownImportIn):
+    """Markdown 批量导入：dry_run=True 仅预览解析结果。"""
+    parsed = md_import.parse_markdown(body.markdown)
+    if body.dry_run:
+        preview = [
+            {"l1": s["name"], "description": s["description"], "count": len(s["questions"]),
+             "questions": [q["question"] for q in s["questions"][:5]]}
+            for s in parsed["sections"]
+        ]
+        return {"dry_run": True, "sections": preview, "errors": parsed["errors"], "total": parsed["total"]}
+    result = md_import.import_parsed(body.kb_id, parsed)
+    return result
+
+
 # ---------- 匹配（两级 LLM 路由） ----------
 class MatchIn(BaseModel):
     kb_id: int
@@ -344,6 +365,7 @@ async def match(body: MatchIn):
     route_res = await llm.route(question, l1_rows, l2_rows)
 
     qas, matched = [], []
+    degraded = route_res.degraded
     if route_res.l2_id:
         qas = [dict(r) for r in conn.execute(
             "SELECT * FROM qa WHERE l2_id=? AND status='active'", (route_res.l2_id,)).fetchall()]
@@ -351,8 +373,15 @@ async def match(body: MatchIn):
         m_res = await llm.match_candidates(question, qas)
         matched = m_res.candidates
         degraded = m_res.degraded
-    else:
-        degraded = route_res.degraded
+    elif not route_res.l2_id and config.KEYWORD_FALLBACK:
+        # 路由未定位 L2（LLM 不可用或低置信）→ 全库关键词兜底，尽量给候选而不是直接判"新问题"
+        qas = [dict(r) for r in conn.execute(
+            "SELECT qa.* FROM qa JOIN intent_l2 l2 ON qa.l2_id=l2.id "
+            "JOIN intent_l1 l1 ON l2.l1_id=l1.id WHERE l1.kb_id=? AND qa.status='active'",
+            (body.kb_id,)).fetchall()]
+        if qas:
+            matched = llm.keyword_match_global(question, qas)
+            degraded = True
 
     l1_name = next((r["name"] for r in l1_rows if r["id"] == route_res.l1_id), None)
     l2_name = next((r["name"] for r in l2_rows if r["id"] == route_res.l2_id), None)

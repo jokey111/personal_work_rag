@@ -149,6 +149,11 @@ def _keyword_match(question: str, qas: list[dict]) -> list[MatchCandidate]:
     return scored[:3]
 
 
+def keyword_match_global(question: str, qas: list[dict]) -> list[MatchCandidate]:
+    """路由失败（L2 未定位）时的全库关键词兜底匹配。"""
+    return _keyword_match(question, qas)
+
+
 async def route(question: str, l1_rows: list[dict], l2_rows: list[dict]) -> RouteResult:
     """Step 1：意图路由（L1 → L2）。"""
     if not l1_rows:

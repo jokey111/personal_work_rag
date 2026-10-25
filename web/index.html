@@ -187,6 +187,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
           <div style="display:flex;gap:8px">
             <input class="input" style="width:180px" placeholder="🔍 关键词" v-model="keyword" @keyup.enter="filterL2=null; loadQas()">
             <button class="btn sm ghost" @click="filterL1=null;filterL2=null;keyword='';loadQas()">重置</button>
+            <button class="btn sm ghost" @click="openImport">📥 批量导入</button>
             <button class="btn sm" @click="openQaEdit(null)">＋ 新增QA</button>
           </div>
         </div>
@@ -310,6 +311,41 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
     </div>
   </div>
 
+  <!-- Markdown 批量导入抽屉 -->
+  <div v-if="importModal" class="drawer-mask" @click.self="importModal=false">
+    <div class="drawer" style="width:min(680px,94vw)">
+      <h3>📥 Markdown 批量导入</h3>
+      <p style="font-size:12.5px;color:#64748b;line-height:1.7;margin-bottom:10px">
+        格式：<code># 大类名</code>（→ L1，可加 <code>> 描述</code> 给路由看）·
+        <code>## 问题</code>（→ QA）· 字段行 <code>- 别名: / - 答案: / - 追问: / - STAR: / - 质量:</code>（别名可多行）·
+        其余正文自动追加到答案。同库同问题自动跳过，导入的题进各分类的「导入题集」。
+        <a href="#" @click.prevent="importExample" style="color:#4f46e5">填入示例</a>
+      </p>
+      <label class="field"><span>粘贴 Markdown 或选择文件</span>
+        <textarea class="input" rows="10" v-model="importText" placeholder="# 技术原理&#10;> RAG、LLM等技术&#10;&#10;## 1、如何优化RAG召回&#10;- 别名: rag检索差怎么办&#10;- 答案: 先诊断再优化&#10;- 质量: 4"></textarea>
+      </label>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+        <input type="file" ref="importFile" accept=".md,.markdown,.txt" @change="onImportFile" style="font-size:12.5px">
+        <span style="font-size:12px;color:#94a3b8">.md / .txt</span>
+      </div>
+      <div v-if="importPreview" class="route-chain" style="background:#f0fdf4;border-color:#86efac;color:#166534">
+        <b>预览</b><span>共 {{ importPreview.total }} 题 / {{ importPreview.sections.length }} 个大类</span>
+        <span v-for="s in importPreview.sections" :key="s.l1" style="font-size:12px">{{ s.l1 }}({{ s.count }})</span>
+        <span v-if="importPreview.errors.length" style="color:#b45309">⚠ {{ importPreview.errors.length }} 条警告</span>
+      </div>
+      <div v-if="importResult" class="route-chain" :style="importResult.failed ? 'background:#fef2f2;border-color:#fca5a5;color:#991b1b' : 'background:#f0fdf4;border-color:#86efac;color:#166534'">
+        <b>结果</b>
+        <span>导入 {{ importResult.imported }} · 跳过已存在 {{ importResult.skipped_exist }} · 失败 {{ importResult.failed }}</span>
+        <span v-if="importResult.created_l1">新建大类 {{ importResult.created_l1 }}</span>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button class="btn ghost" @click="importModal=false">关闭</button>
+        <button class="btn ghost" @click="previewImport" :disabled="!importText.trim()">校验预览</button>
+        <button class="btn" @click="doImport" :disabled="!importText.trim() || importing">{{ importing ? '导入中…' : '确认导入' }}</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 新问题转正抽屉 -->
   <div v-if="fromLogModal" class="drawer-mask" @click.self="fromLogModal=false">
     <div class="drawer">
@@ -352,6 +388,7 @@ createApp({
       l1Form: { id: null, name: '', description: '' },
       l2Form: { id: null, l1_id: null, name: '', description: '' },
       qaModal: false, qaForm: {},
+      importModal: false, importText: '', importPreview: null, importResult: null, importing: false,
       fromLogModal: false, fromLogForm: {},
     };
   },
@@ -437,6 +474,53 @@ createApp({
     openL1Edit(l1) {
       this.l1Form = l1 ? { id: l1.id, name: l1.name, description: l1.description || '' } : { id: null, name: '', description: '' };
       this.l1Modal = true;
+    },
+    openImport() { this.importModal = true; this.importPreview = null; this.importResult = null; },
+    importExample() {
+      this.importText = `# 技术原理
+> RAG、LLM、向量库等技术问题
+
+## 1、如何优化 RAG 召回不准的问题
+- 别名: rag检索效果差怎么办
+- 别名: 召回率低如何提升
+- 答案: 先诊断再优化：混合检索（向量+BM25）、优化切块与 overlap、加 rerank 精排、查询改写
+- 追问: rerank 模型怎么选
+- STAR: 先说诊断思路，再给优化手段，最后量化提升效果
+- 质量: 4
+
+正文补充也可以写在这里，会自动追加到答案。
+
+## 2、向量数据库如何选型
+- 答案: 看数据规模、运维成本、生态兼容性
+
+# 个人背景
+
+## 请做一个自我介绍
+- 答案: 背景 + 项目亮点 + 与岗位的匹配点，控制在一分钟`;
+      this.importPreview = null; this.importResult = null;
+    },
+    async onImportFile(e) {
+      const f = e.target.files[0];
+      if (!f) return;
+      this.importText = await f.text();
+      this.importPreview = null; this.importResult = null;
+      e.target.value = '';
+    },
+    async previewImport() {
+      try {
+        const r = await this.api('POST', '/api/qas/import-markdown', { kb_id: this.kbId, markdown: this.importText, dry_run: true });
+        this.importPreview = { total: r.total, sections: r.sections, errors: r.errors };
+        this.importResult = null;
+      } catch (e) { alert(e.message); }
+    },
+    async doImport() {
+      this.importing = true;
+      try {
+        this.importResult = await this.api('POST', '/api/qas/import-markdown', { kb_id: this.kbId, markdown: this.importText });
+        this.importPreview = null;
+        await this.loadTree();
+        if (this.page === 'manage') await this.loadQas();
+      } catch (e) { alert(e.message); } finally { this.importing = false; }
     },
     openL2Edit(l2, l1) {
       this.l2Form = l2 ? { id: l2.id, l1_id: l2.l1_id, name: l2.name, description: l2.description || '' } : { id: null, l1_id: l1.id, name: '', description: '' };
