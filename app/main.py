@@ -356,12 +356,14 @@ SETTING_SPECS = {  # key: (类型, 下限, 上限)
     "match_min_score": (float, 0.0, 1.0),
     "route_min_score": (float, 0.0, 1.0),
     "keyword_match_min_score": (float, 0.0, 1.0),
+    "keyword_direct_score": (float, 0.0, 1.0),
     "default_top_k": (int, 1, 10),
 }
 _SETTING_DEFAULTS = {
     "match_min_score": lambda: config.MATCH_MIN_SCORE,
     "route_min_score": lambda: config.ROUTE_MIN_SCORE,
     "keyword_match_min_score": lambda: config.KEYWORD_MATCH_MIN_SCORE,
+    "keyword_direct_score": lambda: config.KEYWORD_DIRECT_SCORE,
     "default_top_k": lambda: 3,
 }
 
@@ -411,7 +413,9 @@ def update_settings(body: SettingsIn):
 async def _run_match(body: MatchIn, emit) -> dict:
     """执行完整匹配；emit(stage, data) 用于流式上报进度，非流式传 no-op。
 
-    链路：Step1 路由 → Step2 该 L2 内精配 →（为空时）全库关键词二次兜底 → 记日志。
+    链路：Step0 全库关键词直配（≥直配线直接命中，省 LLM）
+          → 未命中 Step1 LLM 意图路由 → Step2 该 L2 内精配
+          →（为空时）全库关键词二次兜底 → 记日志。
     """
     t0 = time.perf_counter()
     question = body.question.strip()
@@ -423,8 +427,10 @@ async def _run_match(body: MatchIn, emit) -> dict:
     min_score = body.min_score if body.min_score is not None else s["match_min_score"]
     route_min = s["route_min_score"]
     kw_min = s["keyword_match_min_score"]
+    direct_score = s["keyword_direct_score"]
     trace: dict = {"params": {"top_k": top_k, "match_min_score": min_score,
-                              "route_min_score": route_min, "keyword_match_min_score": kw_min}}
+                              "route_min_score": route_min, "keyword_match_min_score": kw_min,
+                              "keyword_direct_score": direct_score}}
 
     l1_rows = [dict(r) for r in conn.execute(
         "SELECT * FROM intent_l1 WHERE kb_id=? ORDER BY sort_order, id", (body.kb_id,)).fetchall()]
@@ -434,59 +440,70 @@ async def _run_match(body: MatchIn, emit) -> dict:
     if not l1_rows:
         raise HTTPException(400, "该知识库还没有意图分类，请先创建")
 
-    # ---- Step 1 意图路由 ----
-    t1 = time.perf_counter()
-    route_res = await llm.route(question, l1_rows, l2_rows, route_min)
-    trace["route"] = {**route_res.detail, "ms": round((time.perf_counter() - t1) * 1000)}
-    l1_name = next((r["name"] for r in l1_rows if r["id"] == route_res.l1_id), None)
-    l2_name = next((r["name"] for r in l2_rows if r["id"] == route_res.l2_id), None)
-    await emit("route", {
-        "l1_id": route_res.l1_id, "l2_id": route_res.l2_id,
-        "l1_name": l1_name, "l2_name": l2_name,
-        "confidence": route_res.confidence, "reason": route_res.reason,
-        "degraded": route_res.degraded, "ms": trace["route"]["ms"], **route_res.detail,
-    })
+    # 全库 active QA 只查一次：Step0 直配扫描 + 二次兜底复用
+    all_qas = [dict(r) for r in conn.execute(
+        "SELECT qa.* FROM qa JOIN intent_l2 l2 ON qa.l2_id=l2.id "
+        "JOIN intent_l1 l1 ON l2.l1_id=l1.id WHERE l1.kb_id=? AND qa.status='active'",
+        (body.kb_id,)).fetchall()]
 
-    # ---- Step 2 候选精配（该 L2 内）----
-    qas, matched = [], []
-    degraded = route_res.degraded
-    if route_res.l2_id:
-        qas = [dict(r) for r in conn.execute(
-            "SELECT * FROM qa WHERE l2_id=? AND status='active'", (route_res.l2_id,)).fetchall()]
-    if qas:
-        t2 = time.perf_counter()
-        m_res = await llm.match_candidates(question, qas, min_score=min_score, kw_min=kw_min, limit=top_k)
-        matched, degraded = m_res.candidates, m_res.degraded
-        trace["match"] = {**m_res.detail, "ms": round((time.perf_counter() - t2) * 1000)}
-        await emit("match", trace["match"])
-        if not matched and config.KEYWORD_FALLBACK:
-            # 该 L2 下没匹配到（含低分被滤）→ 全库关键词再兜底（路由可能选错 L1）
-            t3 = time.perf_counter()
-            all_qas = [dict(r) for r in conn.execute(
-                "SELECT qa.* FROM qa JOIN intent_l2 l2 ON qa.l2_id=l2.id "
-                "JOIN intent_l1 l1 ON l2.l1_id=l1.id WHERE l1.kb_id=? AND qa.status='active'",
-                (body.kb_id,)).fetchall()]
-            global_matched, g_detail = llm.keyword_match_global(question, all_qas, kw_min)
-            trace["fallback"] = {**g_detail, "trigger": "L2 内无达标候选",
-                                 "ms": round((time.perf_counter() - t3) * 1000)}
-            await emit("fallback", trace["fallback"])
-            if global_matched:
-                qas, matched, degraded = all_qas, global_matched, True
-    elif config.KEYWORD_FALLBACK:
-        # 路由未定位 L2 → 全库关键词兜底，尽量给候选而不是直接判"新问题"
-        t3 = time.perf_counter()
-        qas = [dict(r) for r in conn.execute(
-            "SELECT qa.* FROM qa JOIN intent_l2 l2 ON qa.l2_id=l2.id "
-            "JOIN intent_l1 l1 ON l2.l1_id=l1.id WHERE l1.kb_id=? AND qa.status='active'",
-            (body.kb_id,)).fetchall()]
+    # ---- Step 0 关键词直配（毫秒级；命中则省去两轮 LLM 调用）----
+    route_res = None
+    qas, matched, degraded = [], [], False
+    tp = time.perf_counter()
+    direct, d_detail = llm.keyword_match_global(question, all_qas, direct_score) if all_qas \
+        else ([], {"engine": "none", "pool_size": 0, "threshold": direct_score, "best_score": 0.0})
+    trace["prematch"] = {**d_detail, "ms": round((time.perf_counter() - tp) * 1000)}
+    await emit("prematch", trace["prematch"])
+    if direct:
+        qas = all_qas
+        matched = [llm.MatchCandidate(c.qa_id, c.score, f"关键词直配（重合度 {c.score}）")
+                   for c in direct]
+    else:
+        # ---- Step 1 LLM 意图路由 ----
+        t1 = time.perf_counter()
+        route_res = await llm.route(question, l1_rows, l2_rows, route_min)
+        trace["route"] = {**route_res.detail, "ms": round((time.perf_counter() - t1) * 1000)}
+        l1_name = next((r["name"] for r in l1_rows if r["id"] == route_res.l1_id), None)
+        l2_name = next((r["name"] for r in l2_rows if r["id"] == route_res.l2_id), None)
+        await emit("route", {
+            "l1_id": route_res.l1_id, "l2_id": route_res.l2_id,
+            "l1_name": l1_name, "l2_name": l2_name,
+            "confidence": route_res.confidence, "reason": route_res.reason,
+            "degraded": route_res.degraded, "ms": trace["route"]["ms"], **route_res.detail,
+        })
+
+        # ---- Step 2 候选精配（该 L2 内）----
+        if route_res.l2_id:
+            qas = [dict(r) for r in conn.execute(
+                "SELECT * FROM qa WHERE l2_id=? AND status='active'", (route_res.l2_id,)).fetchall()]
         if qas:
-            matched, g_detail = llm.keyword_match_global(question, qas, kw_min)
-            degraded = True
-            trace["fallback"] = {**g_detail, "trigger": "路由未定位子意图",
-                                 "ms": round((time.perf_counter() - t3) * 1000)}
-            await emit("fallback", trace["fallback"])
-        else:
-            trace["fallback"] = {"engine": "none", "trigger": "路由未定位子意图且库内无 QA"}
+            t2 = time.perf_counter()
+            m_res = await llm.match_candidates(question, qas, min_score=min_score, kw_min=kw_min, limit=top_k)
+            matched, degraded = m_res.candidates, m_res.degraded
+            trace["match"] = {**m_res.detail, "ms": round((time.perf_counter() - t2) * 1000)}
+            await emit("match", trace["match"])
+            if not matched and config.KEYWORD_FALLBACK:
+                # 该 L2 下没匹配到（含低分被滤）→ 全库关键词再兜底（路由可能选错 L1）
+                t3 = time.perf_counter()
+                global_matched, g_detail = llm.keyword_match_global(question, all_qas, kw_min)
+                trace["fallback"] = {**g_detail, "trigger": "L2 内无达标候选",
+                                     "ms": round((time.perf_counter() - t3) * 1000)}
+                await emit("fallback", trace["fallback"])
+                if global_matched:
+                    qas, matched, degraded = all_qas, global_matched, True
+        elif config.KEYWORD_FALLBACK:
+            # 路由未定位 L2 → 全库关键词兜底，尽量给候选而不是直接判"新问题"
+            t3 = time.perf_counter()
+            if all_qas:
+                matched, g_detail = llm.keyword_match_global(question, all_qas, kw_min)
+                degraded = True
+                trace["fallback"] = {**g_detail, "trigger": "路由未定位子意图",
+                                     "ms": round((time.perf_counter() - t3) * 1000)}
+                await emit("fallback", trace["fallback"])
+                if matched:
+                    qas = all_qas
+            else:
+                trace["fallback"] = {"engine": "none", "trigger": "路由未定位子意图且库内无 QA"}
 
     # ---- 命中处理与日志 ----
     qa_details, hit_ids = [], []
@@ -512,17 +529,30 @@ async def _run_match(body: MatchIn, emit) -> dict:
         cur = txn.execute(
             "INSERT INTO query_log(kb_id, question, l1_id, l2_id, route_confidence, matched_qa_ids, source) "
             "VALUES(?,?,?,?,?,?,?)",
-            (body.kb_id, question, route_res.l1_id, route_res.l2_id,
-             route_res.confidence, json.dumps(hit_ids), source),
+            (body.kb_id, question,
+             route_res.l1_id if route_res else None,
+             route_res.l2_id if route_res else None,
+             route_res.confidence if route_res else (matched[0].score if matched else 0.0),
+             json.dumps(hit_ids), source),
         )
         log_id = cur.lastrowid
+
+    if route_res:
+        l1_name = next((r["name"] for r in l1_rows if r["id"] == route_res.l1_id), None)
+        l2_name = next((r["name"] for r in l2_rows if r["id"] == route_res.l2_id), None)
+        route_view = {"l1_id": route_res.l1_id, "l2_id": route_res.l2_id, "l1_name": l1_name,
+                      "l2_name": l2_name, "confidence": route_res.confidence,
+                      "reason": route_res.reason, "degraded": degraded}
+    else:
+        # 关键词直配命中：未走 LLM 路由
+        route_view = {"l1_id": None, "l2_id": None, "l1_name": "关键词直配", "l2_name": "全库扫描命中",
+                      "confidence": matched[0].score if matched else trace["prematch"].get("best_score", 0.0),
+                      "reason": "关键词重合度达标，直接命中，未调用 LLM", "degraded": False}
 
     trace["total_ms"] = round((time.perf_counter() - t0) * 1000)
     result = {
         "log_id": log_id,
-        "route": {"l1_id": route_res.l1_id, "l2_id": route_res.l2_id, "l1_name": l1_name,
-                  "l2_name": l2_name, "confidence": route_res.confidence,
-                  "reason": route_res.reason, "degraded": degraded},
+        "route": route_view,
         "matched": qa_details,
         "source": source,
         "trace": trace,

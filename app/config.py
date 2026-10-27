@@ -37,6 +37,7 @@ MATCH_MIN_SCORE = float(_env("MATCH_MIN_SCORE", "0.7"))
 ROUTE_MIN_SCORE = float(_env("ROUTE_MIN_SCORE", "0.3"))          # 关键词路由定位线
 MATCH_MIN_SCORE = float(_env("MATCH_MIN_SCORE", "0.7"))          # LLM 精配最低命中分
 KEYWORD_MATCH_MIN_SCORE = float(_env("KEYWORD_MATCH_MIN_SCORE", "0.7"))  # 关键词精配命中线
+KEYWORD_DIRECT_SCORE = float(_env("KEYWORD_DIRECT_SCORE", "0.7"))  # 全库关键词直配线：≥此值直接命中，不走 LLM
 
 # --- 备份保留天数 ---
 BACKUP_KEEP_DAYS = int(_env("BACKUP_KEEP_DAYS", "30"))

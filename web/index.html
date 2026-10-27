@@ -152,7 +152,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
         <div class="err" v-if="matchErr">{{ matchErr }}</div>
 
         <!-- 实时进度：每一步做什么、用什么引擎、耗时 -->
-        <div v-if="matching && !matchSteps.length" class="step-card running">⏳ ① 意图路由中…（LLM 在线约 1~3 秒）</div>
+        <div v-if="matching && !matchSteps.length" class="step-card running">⏳ ① 全库关键词直配中…（毫秒级，命中则免 LLM）</div>
         <div v-for="s in matchSteps" :key="s.stage" class="step-card" :class="{running: s._running}">
           <div class="step-head">
             <b>{{ s.label }}</b>
@@ -399,11 +399,13 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
       <p style="font-size:12.5px;color:#64748b;line-height:1.7;margin-bottom:14px">
         保存后立即生效（存服务器数据库，无需重启）。取值 0~1；调高 → 更严格、宁可进新问题池；调低 → 更容易出候选。
       </p>
+      <label class="field"><span>关键词直配线 keyword_direct_score（默认 0.7，全库重合度≥此值直接命中、免 LLM）</span>
+        <input class="input" type="number" step="0.05" min="0" max="1" v-model="settingsForm.keyword_direct_score"></label>
       <label class="field"><span>LLM 精配最低命中分 match_min_score（默认 0.7）</span>
         <input class="input" type="number" step="0.05" min="0" max="1" v-model="settingsForm.match_min_score"></label>
       <label class="field"><span>关键词路由定位线 route_min_score（默认 0.3，仅 LLM 不可用时生效）</span>
         <input class="input" type="number" step="0.05" min="0" max="1" v-model="settingsForm.route_min_score"></label>
-      <label class="field"><span>关键词精配命中线 keyword_match_min_score（默认 0.5）</span>
+      <label class="field"><span>关键词兜底命中线 keyword_match_min_score（默认 0.7）</span>
         <input class="input" type="number" step="0.05" min="0" max="1" v-model="settingsForm.keyword_match_min_score"></label>
       <label class="field"><span>默认返回条数 default_top_k（1~10）</span>
         <input class="input" type="number" step="1" min="1" max="10" v-model="settingsForm.default_top_k"></label>
@@ -472,6 +474,9 @@ createApp({
       const t = this.matchResult?.trace;
       if (!t) return '';
       const parts = [];
+      if (t.prematch?.best_score !== undefined) {
+        parts.push(`关键词直配：全库 ${t.prematch.pool_size} 题最高重合度 ${t.prematch.best_score} < 直配线 ${t.prematch.threshold}`);
+      }
       if (t.match?.engine === 'llm') {
         if (t.match.raw_count > 0 && t.match.dropped?.length) {
           const d = t.match.dropped.map(x => `「${(x.question || x.id).slice(0, 25)}」${x.score}分`).join('、');
@@ -563,8 +568,14 @@ createApp({
       }
       const d = evt.data;
       let label = '', engineLabel = '', text = '';
-      if (evt.stage === 'route') {
-        label = '① 意图路由';
+      if (evt.stage === 'prematch') {
+        label = '① 关键词直配';
+        engineLabel = d.engine === 'none' ? '无' : '全库字符匹配';
+        const hit = d.kept ? `命中 ${d.kept} 个，跳过 LLM 直接返回` : `最高重合度 ${d.best_score ?? '-'} < 直配线 ${d.threshold ?? '-'}，转 LLM 链路`;
+        text = `扫描全库 ${d.pool_size} 个 QA（${d.ms ?? '-'} ms） · ${hit}`;
+        this.matchSteps.push({ stage: evt.stage, label, engine: d.engine === 'none' ? 'none' : 'keyword', engineLabel, ms: d.ms, text });
+      } else if (evt.stage === 'route') {
+        label = '② LLM 意图路由';
         engineLabel = d.engine === 'llm' ? 'LLM 语义路由' : (d.engine === 'keyword' ? '关键词兜底' : '无');
         const target = (d.reason || '').includes('未定位') || !d.l2_id
           ? `<span class="dim">未能定位子意图（最高重合度 ${d.best_score ?? '-'} < 定位线 ${d.threshold ?? '-'}）</span>`
@@ -572,7 +583,7 @@ createApp({
         text = `${target}<br><span class="dim">${d.reason || ''} · 候选子意图 ${d.pool_size ?? '-'} 个</span>`;
         this.matchSteps.push({ stage: evt.stage, label, engine: d.engine, engineLabel, ms: d.ms, text });
       } else if (evt.stage === 'match') {
-        label = '② 候选精配';
+        label = '③ LLM 候选精配';
         engineLabel = d.engine === 'llm' ? 'LLM 语义匹配' : (d.engine === 'keyword' ? '关键词兜底' : '无');
         let kept;
         if (d.engine === 'llm') {
@@ -590,7 +601,7 @@ createApp({
         text = `候选池 ${d.pool_size} 个 · ${kept}${dropped}`;
         this.matchSteps.push({ stage: evt.stage, label, engine: d.engine, engineLabel, ms: d.ms, text });
       } else if (evt.stage === 'fallback') {
-        label = '③ 全库二次兜底';
+        label = '④ 全库二次兜底';
         engineLabel = '关键词';
         text = `触发原因：${d.trigger} · 扫描全库 ${d.pool_size} 个 QA · 最高重合度 ${d.best_score}（命中线 ${d.threshold}）`;
         this.matchSteps.push({ stage: evt.stage, label, engine: 'keyword', engineLabel, ms: d.ms, text });

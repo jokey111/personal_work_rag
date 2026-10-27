@@ -156,7 +156,7 @@ def _keyword_match(question: str, qas: list[dict],
     kept = [MatchCandidate(i, s, "关键词兜底") for i, s in scored_all if s >= min_score]
     kept.sort(key=lambda c: -c.score)
     detail = {"engine": "keyword", "pool_size": len(qas), "threshold": min_score,
-              "best_score": max((s for _, s in scored_all), default=0.0)}
+              "best_score": max((s for _, s in scored_all), default=0.0), "kept": len(kept)}
     return kept[:3], detail
 
 
