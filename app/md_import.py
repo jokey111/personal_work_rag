@@ -14,9 +14,10 @@ def _clean_question(t: str) -> str:
 def parse_markdown(text: str) -> dict:
     """解析导入格式，返回 {sections, errors, total}。
 
-    # 一级标题 -> L1 大类（同名合并）
-    > 引用行  -> L1 描述（紧跟标题的第一个引用）
+    # 一级标题 -> 一级分类（同名合并）
+    > 引用行  -> 分类描述（仅占位，不落库）
     ## 二级标题 -> QA 问题（自动去 "12、" 序号）
+    - 标签:   -> 该问题的标签（逗号/顿号分隔，可多行）
     - 别名: / - 答案: / - 追问: / - STAR: / - 质量:  字段行，可重复
     其余非空文本 -> 追加到当前问题的答案正文
     """
@@ -32,7 +33,7 @@ def parse_markdown(text: str) -> dict:
             cur_q["answer"] = (cur_q["answer"] + "\n\n" + extra).strip() if cur_q["answer"] else extra
             body_buf.clear()
 
-    field_pat = re.compile(r"^[-*]\s*(别名|答案|追问|STAR|[Ss]tar要点|质量)\s*[:：]\s*(.*)$")
+    field_pat = re.compile(r"^[-*]\s*(标签|别名|答案|追问|STAR|[Ss]tar要点|质量)\s*[:：]\s*(.*)$")
 
     for ln in text.split("\n"):
         h1 = re.match(r"^#\s+(.+)$", ln)
@@ -53,7 +54,8 @@ def parse_markdown(text: str) -> dict:
                 continue
             cur_q = {
                 "question": _clean_question(h2.group(1)),
-                "question_aliases": "", "answer": "", "follow_ups": "", "star_hint": "", "quality": 3,
+                "question_aliases": "", "answer": "", "follow_ups": "", "star_hint": "",
+                "quality": 3, "tags": [],
             }
             cur_sec["questions"].append(cur_q)
         elif quote and cur_q is None and cur_sec is not None and not cur_sec["description"]:
@@ -63,7 +65,10 @@ def parse_markdown(text: str) -> dict:
                 m = field_pat.match(ln)
                 if m:
                     key, val = m.group(1), m.group(2).strip()
-                    if key == "别名":
+                    if key == "标签":
+                        parts = [p.strip() for p in re.split(r"[,，、;；]", val) if p.strip()]
+                        cur_q["tags"].extend(parts)
+                    elif key == "别名":
                         cur_q["question_aliases"] = (cur_q["question_aliases"] + "\n" + val).strip("\n")
                     elif key == "答案":
                         cur_q["answer"] = (cur_q["answer"] + "\n" + val).strip()
@@ -89,20 +94,47 @@ def parse_markdown(text: str) -> dict:
 
 
 def import_parsed(kb_id: int, parsed: dict) -> dict:
-    """把 parse_markdown 的结果写入指定知识库：QA 直接入库（跳过同库同问题）。
+    """把 parse_markdown 的结果写入指定知识库。
 
-    `# 大类` 标题仅作分组展示用（扁平意图体系下 QA 直接挂库），不再建意图。
+    `# 大类` 标题 → 一级分类（不存在则创建）；`- 标签:` → 标签（不存在则创建）；
+    QA 直接入库并挂分类与标签（跳过同库同问题）。
     """
-    from .main import QAIn, create_qa  # 延迟导入避免循环依赖
+    from .main import QAIn, create_qa, create_category, create_tag, CategoryIn, TagIn  # 延迟导入避免循环依赖
 
     conn = db.get_conn()
     imported, skipped, failed = 0, 0, 0
+    created_categories, created_tags = 0, 0
 
     existing = {
         r["question"] for r in conn.execute(
             "SELECT question FROM qa WHERE kb_id=?", (kb_id,)).fetchall()}
 
     for sec in parsed["sections"]:
+        # 大类 → 一级分类（不存在则建）
+        row = conn.execute(
+            "SELECT id FROM category WHERE kb_id=? AND parent_id IS NULL AND name=?",
+            (kb_id, sec["name"])).fetchone()
+        if row:
+            cat_id = row["id"]
+        else:
+            res = create_category(CategoryIn(kb_id=kb_id, parent_id=None, name=sec["name"]))
+            cat_id = res["id"]
+            created_categories += 1
+
+        # 本节涉及的标签一次性建好
+        tag_ids_by_name: dict[str, int] = {}
+        for q in sec["questions"]:
+            for name in q.get("tags", []):
+                if name in tag_ids_by_name:
+                    continue
+                trow = conn.execute("SELECT id FROM tag WHERE name=?", (name,)).fetchone()
+                if trow:
+                    tag_ids_by_name[name] = trow["id"]
+                else:
+                    res = create_tag(TagIn(name=name))
+                    tag_ids_by_name[name] = res["id"]
+                    created_tags += 1
+
         for q in sec["questions"]:
             if not q["question"]:
                 continue
@@ -111,9 +143,11 @@ def import_parsed(kb_id: int, parsed: dict) -> dict:
                 continue
             try:
                 create_qa(QAIn(
-                    kb_id=kb_id, question=q["question"], question_aliases=q["question_aliases"],
+                    kb_id=kb_id, category_id=cat_id, question=q["question"],
+                    question_aliases=q["question_aliases"],
                     answer=q["answer"] or "（待补充）", follow_ups=q["follow_ups"],
                     star_hint=q["star_hint"], quality=q["quality"],
+                    tag_ids=[tag_ids_by_name[n] for n in q.get("tags", []) if n in tag_ids_by_name],
                 ))
                 imported += 1
                 existing.add(q["question"])
@@ -122,5 +156,6 @@ def import_parsed(kb_id: int, parsed: dict) -> dict:
 
     return {
         "imported": imported, "skipped_exist": skipped, "failed": failed,
+        "created_categories": created_categories, "created_tags": created_tags,
         "errors": parsed["errors"], "total": parsed["total"],
     }
