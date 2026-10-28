@@ -1,4 +1,4 @@
-"""LLM 路由模块：Step1 意图路由 + Step2 候选精配。
+"""LLM 路由模块：Step1 意图路由（意图→知识库） + Step2 候选精配。
 
 OpenAI 兼容 chat/completions；失败时抛 LLMError，由上层降级关键词匹配。
 """
@@ -16,16 +16,17 @@ class LLMError(Exception):
 
 
 ROUTE_SYSTEM_PROMPT = (
-    "你是面试题库的意图路由器。根据面试官的问题，从意图树中选择最匹配的分类。\n"
+    "你是面试题库的意图路由器。根据面试官的问题，从意图列表中选择最匹配的一个意图。"
+    "每个意图挂载了若干知识库，选中意图后将在其挂载的知识库中检索答案。\n"
     "规则：\n"
-    "1. 先定位 L1 大类，再在该大类的 L2 中选择；只能输出树中存在的 id\n"
-    "2. 分类拿不准时 confidence 给低分；完全无法归类输出 l1_id=\"unknown\"\n"
+    "1. 只能输出列表中存在的 intent_id\n"
+    "2. 分类拿不准时 confidence 给低分；完全无法归类输出 intent_id=\"unknown\"\n"
     "3. 只输出 JSON，不要解释\n"
-    '输出格式：{"l1_id":"...","l2_id":"...","confidence":0.0,"reason":"..."}'
+    '输出格式：{"intent_id":"...","confidence":0.0,"reason":"..."}'
 )
 
 MATCH_SYSTEM_PROMPT = (
-    "你是面试 QA 匹配器。给定候选问题列表（含变体问法），选出与目标问题语义最接近的 1~3 条。\n"
+    "你是面试 QA 匹配器。给定候选问题列表，选出与目标问题语义最接近的 1~3 条。\n"
     "规则：\n"
     "1. 语义相近即算匹配：换了说法、部分重合、口语化表达都算\n"
     "2. 只有候选能**直接回答**目标问题时才算匹配，score 给 0.7 以上；"
@@ -39,8 +40,7 @@ MATCH_SYSTEM_PROMPT = (
 
 @dataclass
 class RouteResult:
-    l1_id: int | None
-    l2_id: int | None
+    intent_id: int | None
     confidence: float
     reason: str
     degraded: bool = False  # True=关键词兜底
@@ -107,41 +107,22 @@ def _extract_json(text: str) -> dict:
         raise LLMError(f"LLM 输出非 JSON: {text[:200]}") from e
 
 
-def _build_intent_tree(l1_rows: list[dict], l2_rows: list[dict]) -> list[dict]:
-    tree: list[dict] = []
-    l2_by_l1: dict[int, list[dict]] = {}
-    for l2 in l2_rows:
-        l2_by_l1.setdefault(l2["l1_id"], []).append(
-            {"id": l2["id"], "name": l2["name"], "description": l2["description"]}
-        )
-    for l1 in l1_rows:
-        tree.append(
-            {
-                "id": l1["id"],
-                "name": l1["name"],
-                "description": l1["description"],
-                "children": l2_by_l1.get(l1["id"], []),
-            }
-        )
-    return tree
-
-
-def _keyword_route(question: str, l1_rows: list[dict], l2_rows: list[dict],
+def _keyword_route(question: str, intents: list[dict],
                    min_score: float = 0.3) -> RouteResult:
-    """关键词兜底路由：问题与 L2 名称/描述的字符重合度打分。"""
-    best_l2, best_score = None, 0.0
-    for l2 in l2_rows:
-        text = f"{l2['name']} {l2['description'] or ''}"
+    """关键词兜底路由（LLM 不可用时）：问题与意图名称/描述的字符重合度打分。"""
+    best, best_score = None, 0.0
+    for it in intents:
+        text = f"{it['name']} {it['description'] or ''}"
         hits = sum(1 for ch in set(question) if ch in text and not ch.isspace())
         score = hits / max(len(set(question) - {" "}), 1)
         if score > best_score:
-            best_score, best_l2 = score, l2
-    detail = {"engine": "keyword", "pool_size": len(l2_rows),
+            best_score, best = score, it
+    detail = {"engine": "keyword", "pool_size": len(intents),
               "best_score": round(best_score, 2), "threshold": min_score}
-    if best_l2 and best_score >= min_score:
-        return RouteResult(best_l2["l1_id"], best_l2["id"], round(best_score * 0.8, 2),
+    if best and best_score >= min_score:
+        return RouteResult(best["id"], round(best_score * 0.8, 2),
                            "关键词兜底", degraded=True, detail=detail)
-    return RouteResult(None, None, 0.0, "关键词兜底未定位", degraded=True, detail=detail)
+    return RouteResult(None, 0.0, "关键词兜底未定位", degraded=True, detail=detail)
 
 
 def _keyword_match(question: str, qas: list[dict],
@@ -166,38 +147,42 @@ def keyword_match_global(question: str, qas: list[dict],
     return _keyword_match(question, qas, min_score)
 
 
-async def route(question: str, l1_rows: list[dict], l2_rows: list[dict],
+async def route(question: str, intents: list[dict],
                 route_min_score: float = 0.3) -> RouteResult:
-    """Step 1：意图路由（L1 → L2）。"""
-    if not l1_rows:
-        return RouteResult(None, None, 0.0, "意图树为空", detail={"engine": "none"})
-    tree = _build_intent_tree(l1_rows, l2_rows)
+    """Step 1：意图路由（扁平意图列表 → 选一个意图，取其挂载的知识库检索）。"""
+    if not intents:
+        return RouteResult(None, 0.0, "意图列表为空", detail={"engine": "none"})
+    items = [{"id": it["id"], "name": it["name"],
+              "description": it["description"] or "",
+              "knowledge_bases": it.get("kb_names") or []} for it in intents]
     try:
-        data = await _chat_json(ROUTE_SYSTEM_PROMPT, json.dumps({"intent_tree": tree, "question": question}, ensure_ascii=False))
-        l1_id = data.get("l1_id")
-        l2_id = data.get("l2_id")
-        valid_l1 = {r["id"] for r in l1_rows}
-        valid_l2 = {r["id"] for r in l2_rows}
-        l1_id = int(l1_id) if l1_id not in (None, "unknown") and str(l1_id).isdigit() and int(l1_id) in valid_l1 else None
-        l2_id = int(l2_id) if l2_id not in (None, "unknown") and str(l2_id).isdigit() and int(l2_id) in valid_l2 else None
-        return RouteResult(l1_id, l2_id, float(data.get("confidence", 0) or 0), str(data.get("reason", "")),
-                           detail={"engine": "llm", "pool_size": len(l2_rows)})
+        data = await _chat_json(ROUTE_SYSTEM_PROMPT, json.dumps(
+            {"intents": items, "question": question}, ensure_ascii=False))
+        raw_id = data.get("intent_id")
+        valid = {r["id"] for r in intents}
+        intent_id = int(raw_id) if raw_id not in (None, "unknown") and str(raw_id).isdigit() \
+            and int(raw_id) in valid else None
+        return RouteResult(intent_id, float(data.get("confidence", 0) or 0), str(data.get("reason", "")),
+                           detail={"engine": "llm", "pool_size": len(intents)})
     except LLMError:
         if config.KEYWORD_FALLBACK:
-            return _keyword_route(question, l1_rows, l2_rows, route_min_score)
+            return _keyword_route(question, intents, route_min_score)
         raise
 
 
 async def match_candidates(question: str, qas: list[dict],
                            min_score: float | None = None,
                            kw_min: float = 0.7, limit: int = 3) -> MatchResult:
-    """Step 2：候选精配，输入为该 L2 下所有 active QA。"""
+    """Step 2：候选精配，输入为意图挂载知识库内所有 active QA。
+
+    为控制 token，只发问题名不发别名（直配阶段已用别名做过字符匹配）。
+    """
     if not qas:
         return MatchResult(detail={"engine": "none", "pool_size": 0})
     if min_score is None:
         min_score = config.MATCH_MIN_SCORE
     try:
-        cands = [{"id": q["id"], "question": q["question"], "aliases": q["question_aliases"] or ""} for q in qas]
+        cands = [{"id": q["id"], "question": q["question"]} for q in qas]
         data = await _chat_json(MATCH_SYSTEM_PROMPT, json.dumps({"candidates": cands, "question": question}, ensure_ascii=False))
         valid = {q["id"] for q in qas}
         raw: list[MatchCandidate] = []
