@@ -167,7 +167,8 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
       <div v-if="matchResult" class="card">
         <div class="route-chain">
           <b>路由</b>
-          <span>{{ matchResult.route.l1_name || '未定位大类' }} ▸ {{ matchResult.route.l2_name || '未定位子意图' }}</span>
+          <span>{{ matchResult.route.intent_name || '未识别意图' }}</span>
+          <span v-if="matchResult.route.kb_names?.length" style="font-size:12.5px;color:#4f46e5">→ 检索库：{{ matchResult.route.kb_names.join('、') }}</span>
           <span>confidence {{ matchResult.route.confidence }}</span>
           <span v-if="matchResult.route.degraded" class="degraded">关键词兜底（LLM 不可用）</span>
           <span style="color:#6370a3;font-size:12px">{{ matchResult.route.reason }}</span>
@@ -204,45 +205,39 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
     <!-- 题库管理页 -->
     <div v-if="page==='manage'" class="manage-grid">
       <div class="tree-col">
-        <div class="section-title"><h3>意图树</h3><button class="btn sm ghost" @click="openL1Edit(null)">＋大类</button></div>
-        <div v-for="l1 in tree" :key="l1.id" class="l1-item">
-          <div class="l1-head" @click="toggleL1(l1.id)">
-            <span class="arrow" :class="{open: expanded[l1.id]}">▶</span>
-            <span style="flex:1">{{ l1.name }}</span>
-            <span class="cnt">{{ (l1.children||[]).length }}子</span>
-            <button class="icon-btn" @click.stop="openL1Edit(l1)">✏️</button>
-            <button class="icon-btn" @click.stop="delL1(l1)">🗑</button>
+        <div class="section-title"><h3>意图列表</h3><button class="btn sm ghost" @click="openIntentEdit(null)">＋意图</button></div>
+        <p style="font-size:12px;color:#94a3b8;margin:0 0 8px 4px">
+          意图是全局路由层：识别到意图后，在其挂载的知识库中全量检索答案。一个意图可挂多个库。</p>
+        <div v-for="it in intents" :key="it.id" class="l1-item">
+          <div class="l1-head">
+            <span style="flex:1">{{ it.name }}</span>
+            <span class="cnt">{{ it.qa_count }}题</span>
+            <button class="icon-btn" @click.stop="openIntentEdit(it)">✏️</button>
+            <button class="icon-btn" @click.stop="delIntent(it)">🗑</button>
           </div>
-          <div v-show="expanded[l1.id]">
-            <div v-for="l2 in l1.children" :key="l2.id" class="l2-item" :class="{active: filterL2===l2.id}" @click="filterL1=l1.id; filterL2=l2.id; loadQas()">
-              <span>{{ l2.name }}</span>
-              <span style="display:flex;gap:2px;align-items:center">
-                <span class="cnt">{{ l2.qa_count }}题</span>
-                <button class="icon-btn" @click.stop="openL2Edit(l2, l1)">✏️</button>
-                <button class="icon-btn" @click.stop="delL2(l2)">🗑</button>
-              </span>
-            </div>
-            <div class="l2-item" @click="openL2Edit(null, l1)" style="color:#6366f1">＋ 子意图</div>
+          <div style="padding:4px 12px 8px;font-size:12px;color:#64748b">
+            <span v-if="it.description">{{ it.description }} · </span>
+            <span style="color:#4f46e5">{{ it.kb_ids.length ? it.kbNames.join('、') : '⚠ 未挂载知识库' }}</span>
           </div>
         </div>
+        <div v-if="!intents.length" style="color:#94a3b8;font-size:13px;padding:12px">还没有意图，点击右上角创建</div>
       </div>
 
       <div class="card">
         <div class="section-title">
-          <h3>QA 列表 <span style="font-size:12px;color:#94a3b8;font-weight:400">{{ filterL2 ? '已筛选子意图' : '全部/按大类' }}</span></h3>
+          <h3>QA 列表 <span style="font-size:12px;color:#94a3b8;font-weight:400">当前库：{{ currentKb?.name }}</span></h3>
           <div style="display:flex;gap:8px">
-            <input class="input" style="width:180px" placeholder="🔍 关键词" v-model="keyword" @keyup.enter="filterL2=null; loadQas()">
-            <button class="btn sm ghost" @click="filterL1=null;filterL2=null;keyword='';loadQas()">重置</button>
+            <input class="input" style="width:180px" placeholder="🔍 关键词" v-model="keyword" @keyup.enter="loadQas()">
+            <button class="btn sm ghost" @click="keyword='';loadQas()">重置</button>
             <button class="btn sm ghost" @click="openImport">📥 批量导入</button>
             <button class="btn sm" @click="openQaEdit(null)">＋ 新增QA</button>
           </div>
         </div>
         <table>
-          <thead><tr><th>问题</th><th>分类</th><th>被问</th><th>质量</th><th>状态</th><th>操作</th></tr></thead>
+          <thead><tr><th>问题</th><th>被问</th><th>质量</th><th>状态</th><th>操作</th></tr></thead>
           <tbody>
             <tr v-for="qa in qas" :key="qa.id">
               <td style="max-width:340px">{{ qa.question }}</td>
-              <td style="white-space:nowrap;font-size:12.5px">{{ qa.l1_name }} ▸ {{ qa.l2_name }}</td>
               <td>{{ qa.hit_count }}</td>
               <td>{{ qa.quality }}</td>
               <td>{{ qa.status }}</td>
@@ -251,7 +246,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
                 <button class="icon-btn" @click="delQa(qa)">🗑</button>
               </td>
             </tr>
-            <tr v-if="!qas.length"><td colspan="6" style="color:#94a3b8;text-align:center;padding:24px">暂无 QA，点击右上角新增</td></tr>
+            <tr v-if="!qas.length"><td colspan="5" style="color:#94a3b8;text-align:center;padding:24px">当前库暂无 QA，点击右上角新增或批量导入</td></tr>
           </tbody>
         </table>
       </div>
@@ -271,7 +266,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
         <div v-for="h in hot" :key="h.id" class="row">
           <span style="width:44px;font-size:12px;color:#6366f1;font-weight:700">{{ h.hit_count }}次</span>
           <div class="bar-wrap"><div class="bar" :style="{width: (h.hit_count / hot[0].hit_count * 100) + '%'}"></div></div>
-          <span style="width:46%;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ h.question }} <span style="color:#94a3b8">（{{ h.l2_name }}）</span></span>
+          <span style="width:46%;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ h.question }}</span>
         </div>
         <div v-if="!hot.length" style="color:#94a3b8;font-size:13px">还没有命中记录，去匹配页试一次</div>
       </div>
@@ -307,23 +302,24 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
     </div>
   </div>
 
-  <!-- L1 / L2 编辑 -->
-  <div v-if="l1Modal || l2Modal" class="modal-mask" @click.self="l1Modal=l2Modal=false">
+  <!-- 意图编辑 -->
+  <div v-if="intentModal" class="modal-mask" @click.self="intentModal=false">
     <div class="modal">
-      <h3 style="margin-bottom:14px">{{ l1Modal ? (l1Form.id ? '编辑大类' : '新增大类') : (l2Form.id ? '编辑子意图' : '新增子意图') }}</h3>
-      <label class="field" v-if="l1Modal"><span>大类名称</span><input class="input" v-model="l1Form.name" placeholder="如：技术原理"></label>
-      <template v-if="l2Modal">
-        <label class="field"><span>所属大类</span>
-          <select class="input" v-model="l2Form.l1_id"><option v-for="l1 in tree" :key="l1.id" :value="l1.id">{{ l1.name }}</option></select>
-        </label>
-        <label class="field"><span>子意图名称</span><input class="input" v-model="l2Form.name" placeholder="如：RAG 检索优化"></label>
-      </template>
-      <label class="field"><span>描述 / 典型问题示例（给 LLM 路由看，写得越清楚分类越准）</span>
-        <textarea class="input" rows="3" v-model="(l1Modal ? l1Form : l2Form).description"></textarea>
+      <h3 style="margin-bottom:14px">{{ intentForm.id ? '编辑意图' : '新增意图' }}</h3>
+      <label class="field"><span>意图名称</span><input class="input" v-model="intentForm.name" placeholder="如：技术原理 / 项目经历"></label>
+      <label class="field"><span>描述 / 典型问题示例（给 LLM 识别用，写得越清楚越准）</span>
+        <textarea class="input" rows="3" v-model="intentForm.description"></textarea>
+      </label>
+      <label class="field"><span>挂载知识库（识别到该意图后在这些库中全量检索，可多选）</span>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:4px">
+          <label v-for="k in kbs" :key="k.id" style="display:flex;align-items:center;gap:4px;font-size:13px">
+            <input type="checkbox" :value="k.id" v-model="intentForm.kb_ids"> {{ k.name }}
+          </label>
+        </div>
       </label>
       <div style="display:flex;gap:10px;justify-content:flex-end">
-        <button class="btn ghost" @click="l1Modal=l2Modal=false">取消</button>
-        <button class="btn" @click="saveIntent">保存</button>
+        <button class="btn ghost" @click="intentModal=false">取消</button>
+        <button class="btn" @click="saveIntent" :disabled="!intentForm.name.trim()">保存</button>
       </div>
     </div>
   </div>
@@ -333,11 +329,9 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
     <div class="drawer">
       <h3>{{ qaForm.id ? '编辑 QA' : '新增 QA' }}</h3>
       <div class="form-grid">
-        <label class="field full"><span>所属子意图</span>
-          <select class="input" v-model="qaForm.l2_id">
-            <template v-for="l1 in tree" :key="l1.id">
-              <option v-for="l2 in l1.children" :key="l2.id" :value="l2.id">{{ l1.name }} ▸ {{ l2.name }}</option>
-            </template>
+        <label class="field full"><span>所属知识库</span>
+          <select class="input" v-model="qaForm.kb_id">
+            <option v-for="k in kbs" :key="k.id" :value="k.id">{{ k.name }}</option>
           </select>
         </label>
         <label class="field full"><span>标准问题 *</span><input class="input" v-model="qaForm.question"></label>
@@ -362,9 +356,9 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
     <div class="drawer" style="width:min(680px,94vw)">
       <h3>📥 Markdown 批量导入</h3>
       <p style="font-size:12.5px;color:#64748b;line-height:1.7;margin-bottom:10px">
-        格式：<code># 大类名</code>（→ L1，可加 <code>> 描述</code> 给路由看）·
+        格式：<code># 分组名</code>（仅作预览分组，题目全部进入<b>当前选中的知识库</b>）·
         <code>## 问题</code>（→ QA）· 字段行 <code>- 别名: / - 答案: / - 追问: / - STAR: / - 质量:</code>（别名可多行）·
-        其余正文自动追加到答案。同库同问题自动跳过，导入的题进各分类的「导入题集」。
+        其余正文自动追加到答案。同库同问题自动跳过。
         <a href="#" @click.prevent="importExample" style="color:#4f46e5">填入示例</a>
       </p>
       <label class="field"><span>粘贴 Markdown 或选择文件</span>
@@ -382,7 +376,6 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
       <div v-if="importResult" class="route-chain" :style="importResult.failed ? 'background:#fef2f2;border-color:#fca5a5;color:#991b1b' : 'background:#f0fdf4;border-color:#86efac;color:#166534'">
         <b>结果</b>
         <span>导入 {{ importResult.imported }} · 跳过已存在 {{ importResult.skipped_exist }} · 失败 {{ importResult.failed }}</span>
-        <span v-if="importResult.created_l1">新建大类 {{ importResult.created_l1 }}</span>
       </div>
       <div style="display:flex;gap:10px;justify-content:flex-end">
         <button class="btn ghost" @click="importModal=false">关闭</button>
@@ -422,11 +415,9 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
       <h3>新问题转正为 QA</h3>
       <p style="font-size:13px;color:#64748b;margin-bottom:14px">原话：{{ fromLogForm._original }}</p>
       <label class="field"><span>标准化问题（默认用原话，可改写）</span><input class="input" v-model="fromLogForm.question"></label>
-      <label class="field"><span>所属子意图</span>
-        <select class="input" v-model="fromLogForm.l2_id">
-          <template v-for="l1 in tree" :key="l1.id">
-            <option v-for="l2 in l1.children" :key="l2.id" :value="l2.id">{{ l1.name }} ▸ {{ l2.name }}</option>
-          </template>
+      <label class="field"><span>归入知识库</span>
+        <select class="input" v-model="fromLogForm.kb_id">
+          <option v-for="k in kbs" :key="k.id" :value="k.id">{{ k.name }}</option>
         </select>
       </label>
       <label class="field"><span>答案 *</span><textarea class="input" rows="6" v-model="fromLogForm.answer"></textarea></label>
@@ -452,13 +443,12 @@ createApp({
       question: '', matching: false, matchErr: '', matchResult: null, feedbackDone: {},
       topK: '', matchSteps: [],
       settingsModal: false, settingsForm: {}, settingsSaving: false,
-      tree: [], expanded: {},
-      qas: [], filterL1: null, filterL2: null, keyword: '',
+      intents: [],
+      qas: [], keyword: '',
       overview: {}, hot: [], unmatched: [],
       kbModal: false, kbEditId: null, kbForm: { name: '', description: '', is_default: false },
-      l1Modal: false, l2Modal: false,
-      l1Form: { id: null, name: '', description: '' },
-      l2Form: { id: null, l1_id: null, name: '', description: '' },
+      intentModal: false,
+      intentForm: { id: null, name: '', description: '', sort_order: 0, kb_ids: [] },
       qaModal: false, qaForm: {},
       importModal: false, importText: '', importPreview: null, importResult: null, importing: false,
       fromLogModal: false, fromLogForm: {},
@@ -519,7 +509,7 @@ createApp({
     logout() { this.token = ''; localStorage.removeItem('token'); this.page = 'match'; },
     async initData() {
       await this.loadKbs();
-      await this.loadTree();
+      await this.loadIntents();
     },
     async loadKbs() {
       this.kbs = await this.api('GET', '/api/kbs');
@@ -527,13 +517,18 @@ createApp({
       const found = this.kbs.find(k => k.id === saved);
       this.kbId = found ? found.id : (this.kbs.find(k => k.is_default) || this.kbs[0])?.id;
     },
-    onKbSwitch() { localStorage.setItem('kbId', this.kbId); this.loadTree(); this.qas = []; },
-    async loadTree() {
-      if (!this.kbId) return;
-      this.tree = await this.api('GET', '/api/intents?kb_id=' + this.kbId);
-      this.tree.forEach(l1 => { if (this.expanded[l1.id] === undefined) this.expanded[l1.id] = true; });
+    onKbSwitch() {
+      localStorage.setItem('kbId', this.kbId);
+      this.qas = [];
+      if (this.page === 'manage') this.loadQas();
     },
-    toggleL1(id) { this.expanded[id] = !this.expanded[id]; },
+    async loadIntents() {
+      const list = await this.api('GET', '/api/intents');
+      list.forEach(it => {
+        it.kbNames = (it.kb_ids || []).map(id => this.kbs.find(k => k.id === id)?.name || ('库#' + id));
+      });
+      this.intents = list;
+    },
     async doMatch() {
       this.matching = true; this.matchErr = ''; this.matchResult = null; this.feedbackDone = {}; this.matchSteps = [];
       try {
@@ -575,15 +570,16 @@ createApp({
         text = `扫描全库 ${d.pool_size} 个 QA（${d.ms ?? '-'} ms） · ${hit}`;
         this.matchSteps.push({ stage: evt.stage, label, engine: d.engine === 'none' ? 'none' : 'keyword', engineLabel, ms: d.ms, text });
       } else if (evt.stage === 'route') {
-        label = '② LLM 意图路由';
-        engineLabel = d.engine === 'llm' ? 'LLM 语义路由' : (d.engine === 'keyword' ? '关键词兜底' : '无');
-        const target = (d.reason || '').includes('未定位') || !d.l2_id
-          ? `<span class="dim">未能定位子意图（最高重合度 ${d.best_score ?? '-'} < 定位线 ${d.threshold ?? '-'}）</span>`
-          : `定位到 <b>${d.l1_name || d.l1_id || '未知'}</b> ▸ <b>${d.l2_name || d.l2_id}</b> · confidence ${d.confidence}`;
-        text = `${target}<br><span class="dim">${d.reason || ''} · 候选子意图 ${d.pool_size ?? '-'} 个</span>`;
+        label = '② LLM 意图识别';
+        engineLabel = d.engine === 'llm' ? 'LLM 语义识别' : (d.engine === 'keyword' ? '关键词兜底' : '无');
+        const target = !d.intent_id
+          ? `<span class="dim">未能识别意图（最高重合度 ${d.best_score ?? '-'} < 定位线 ${d.threshold ?? '-'}）</span>`
+          : `识别为 <b>${d.intent_name || d.intent_id}</b> · confidence ${d.confidence}`
+            + (d.kb_names?.length ? `<br><span class="dim">→ 在其挂载的知识库中检索：${d.kb_names.join('、')}</span>` : '');
+        text = `${target}<br><span class="dim">${d.reason || ''} · 候选意图 ${d.pool_size ?? '-'} 个</span>`;
         this.matchSteps.push({ stage: evt.stage, label, engine: d.engine, engineLabel, ms: d.ms, text });
       } else if (evt.stage === 'match') {
-        label = '③ LLM 候选精配';
+        label = '③ LLM 全量精配';
         engineLabel = d.engine === 'llm' ? 'LLM 语义匹配' : (d.engine === 'keyword' ? '关键词兜底' : '无');
         let kept;
         if (d.engine === 'llm') {
@@ -601,7 +597,7 @@ createApp({
         text = `候选池 ${d.pool_size} 个 · ${kept}${dropped}`;
         this.matchSteps.push({ stage: evt.stage, label, engine: d.engine, engineLabel, ms: d.ms, text });
       } else if (evt.stage === 'fallback') {
-        label = '④ 全库二次兜底';
+        label = '④ 全部库二次兜底';
         engineLabel = '关键词';
         text = `触发原因：${d.trigger} · 扫描全库 ${d.pool_size} 个 QA · 最高重合度 ${d.best_score}（命中线 ${d.threshold}）`;
         this.matchSteps.push({ stage: evt.stage, label, engine: 'keyword', engineLabel, ms: d.ms, text });
@@ -624,12 +620,11 @@ createApp({
       await this.api('POST', `/api/log/${this.matchResult.log_id}/feedback`, { feedback: fb });
       this.matchResult.matched.forEach(c => this.feedbackDone[c.qa_id] = true);
     },
-    goManage() { this.page = 'manage'; this.loadTree(); this.loadQas(); },
+    goManage() { this.page = 'manage'; this.loadIntents(); this.loadQas(); },
     goStats() { this.page = 'stats'; this.loadStats(); },
     async loadQas() {
+      if (!this.kbId) return;
       let url = `/api/qas?kb_id=${this.kbId}`;
-      if (this.filterL2) url += `&l2_id=${this.filterL2}`;
-      else if (this.filterL1) url += `&l1_id=${this.filterL1}`;
       if (this.keyword) url += `&q=${encodeURIComponent(this.keyword)}`;
       this.qas = await this.api('GET', url);
     },
@@ -648,10 +643,6 @@ createApp({
         else await this.api('POST', '/api/kbs', this.kbForm);
         this.kbModal = false; await this.loadKbs();
       } catch (e) { alert(e.message); }
-    },
-    openL1Edit(l1) {
-      this.l1Form = l1 ? { id: l1.id, name: l1.name, description: l1.description || '' } : { id: null, name: '', description: '' };
-      this.l1Modal = true;
     },
     openImport() { this.importModal = true; this.importPreview = null; this.importResult = null; },
     importExample() {
@@ -696,55 +687,54 @@ createApp({
       try {
         this.importResult = await this.api('POST', '/api/qas/import-markdown', { kb_id: this.kbId, markdown: this.importText });
         this.importPreview = null;
-        await this.loadTree();
+        await this.loadIntents();
         if (this.page === 'manage') await this.loadQas();
       } catch (e) { alert(e.message); } finally { this.importing = false; }
     },
-    openL2Edit(l2, l1) {
-      this.l2Form = l2 ? { id: l2.id, l1_id: l2.l1_id, name: l2.name, description: l2.description || '' } : { id: null, l1_id: l1.id, name: '', description: '' };
-      this.l2Modal = true;
+    openIntentEdit(it) {
+      this.intentForm = it
+        ? { id: it.id, name: it.name, description: it.description || '', sort_order: it.sort_order || 0, kb_ids: [...(it.kb_ids || [])] }
+        : { id: null, name: '', description: '', sort_order: 0, kb_ids: this.kbId ? [this.kbId] : [] };
+      this.intentModal = true;
     },
     async saveIntent() {
       try {
-        if (this.l1Modal) {
-          const body = { kb_id: this.kbId, name: this.l1Form.name, description: this.l1Form.description };
-          if (this.l1Form.id) await this.api('PUT', `/api/intents/l1/${this.l1Form.id}`, body);
-          else await this.api('POST', '/api/intents/l1', body);
-          this.l1Modal = false;
-        } else {
-          const body = { l1_id: this.l2Form.l1_id, name: this.l2Form.name, description: this.l2Form.description };
-          if (this.l2Form.id) await this.api('PUT', `/api/intents/l2/${this.l2Form.id}`, body);
-          else await this.api('POST', '/api/intents/l2', body);
-          this.l2Modal = false;
-        }
-        await this.loadTree(); this.loadQas();
+        const body = { name: this.intentForm.name, description: this.intentForm.description,
+                       sort_order: this.intentForm.sort_order, kb_ids: this.intentForm.kb_ids };
+        if (this.intentForm.id) await this.api('PUT', `/api/intents/${this.intentForm.id}`, body);
+        else await this.api('POST', '/api/intents', body);
+        this.intentModal = false;
+        await this.loadIntents();
       } catch (e) { alert(e.message); }
     },
-    async delL1(l1) { if (confirm(`删除大类「${l1.name}」及其所有子意图和 QA？不可恢复！`)) { await this.api('DELETE', `/api/intents/l1/${l1.id}`); this.loadTree(); this.loadQas(); } },
-    async delL2(l2) { if (confirm(`删除子意图「${l2.name}」及其 QA？不可恢复！`)) { await this.api('DELETE', `/api/intents/l2/${l2.id}`); this.loadTree(); this.loadQas(); } },
+    async delIntent(it) {
+      if (confirm(`删除意图「${it.name}」？（QA 挂在知识库上，不受影响）`)) {
+        await this.api('DELETE', `/api/intents/${it.id}`); this.loadIntents();
+      }
+    },
     openQaEdit(qa) {
-      this.qaForm = qa ? { ...qa } : { l2_id: this.filterL2 || (this.tree[0]?.children?.[0]?.id ?? null), question: '', question_aliases: '', answer: '', follow_ups: '', star_hint: '', status: 'active', quality: 3 };
+      this.qaForm = qa ? { ...qa } : { kb_id: this.kbId, question: '', question_aliases: '', answer: '', follow_ups: '', star_hint: '', status: 'active', quality: 3 };
       this.qaModal = true;
     },
     async saveQa() {
       try {
-        const body = { l2_id: this.qaForm.l2_id, question: this.qaForm.question, question_aliases: this.qaForm.question_aliases, answer: this.qaForm.answer, follow_ups: this.qaForm.follow_ups, star_hint: this.qaForm.star_hint, status: this.qaForm.status, quality: this.qaForm.quality };
+        const body = { kb_id: this.qaForm.kb_id, question: this.qaForm.question, question_aliases: this.qaForm.question_aliases, answer: this.qaForm.answer, follow_ups: this.qaForm.follow_ups, star_hint: this.qaForm.star_hint, status: this.qaForm.status, quality: this.qaForm.quality };
         if (this.qaForm.id) await this.api('PUT', `/api/qas/${this.qaForm.id}`, body);
         else await this.api('POST', '/api/qas', body);
-        this.qaModal = false; this.loadQas(); this.loadTree();
+        this.qaModal = false; this.loadQas(); this.loadIntents();
       } catch (e) { alert(e.message); }
     },
-    async delQa(qa) { if (confirm(`删除 QA「${qa.question}」？`)) { await this.api('DELETE', `/api/qas/${qa.id}`); this.loadQas(); this.loadTree(); } },
+    async delQa(qa) { if (confirm(`删除 QA「${qa.question}」？`)) { await this.api('DELETE', `/api/qas/${qa.id}`); this.loadQas(); this.loadIntents(); } },
     openFromLog(u) {
-      this.fromLogForm = { log_id: u.id, question: u.question, l2_id: this.tree[0]?.children?.[0]?.id ?? null, answer: '', question_aliases: '', _original: u.question };
+      this.fromLogForm = { log_id: u.id, question: u.question, kb_id: this.kbId, answer: '', question_aliases: '', _original: u.question };
       this.fromLogModal = true;
     },
     async saveFromLog() {
       try {
         await this.api('POST', `/api/qas/from_log/${this.fromLogForm.log_id}`, {
-          l2_id: this.fromLogForm.l2_id, question: this.fromLogForm.question, answer: this.fromLogForm.answer, question_aliases: this.fromLogForm.question_aliases,
+          kb_id: this.fromLogForm.kb_id, question: this.fromLogForm.question, answer: this.fromLogForm.answer, question_aliases: this.fromLogForm.question_aliases,
         });
-        this.fromLogModal = false; this.loadStats(); this.loadTree();
+        this.fromLogModal = false; this.loadStats(); this.loadIntents();
       } catch (e) { alert(e.message); }
     },
   },
