@@ -72,6 +72,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
 .l1-head:hover { background: #f1f5f9; }
 .l1-head .arrow { transition: .15s; font-size: 11px; color: #94a3b8; }
 .l1-head .arrow.open { transform: rotate(90deg); }
+.l1-head .arrow-spacer { width: 11px; display: inline-block; }
 .l2-item { display: flex; justify-content: space-between; align-items: center; padding: 5px 8px 5px 26px; border-radius: 8px; font-size: 13px; color: #475569; cursor: pointer; }
 .l2-item:hover { background: #f1f5f9; }
 .l2-item.active { background: #eef2ff; color: #3730a3; font-weight: 600; }
@@ -108,6 +109,10 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
 .tag-check.on { background: #eef2ff; border-color: #818cf8; color: #3730a3; }
 .l1-head .active, .l1-head span.active { color: #3730a3; font-weight: 700; }
 .l1-item.active .l1-head { background: #eef2ff; }
+.alias-rows { display: flex; flex-direction: column; gap: 8px; }
+.alias-row { display: flex; align-items: center; gap: 8px; }
+.alias-row .alias-num { font-size: 12px; color: #64748b; white-space: nowrap; min-width: 58px; }
+.alias-row .input { flex: 1; }
 </style>
 </head>
 <body>
@@ -189,7 +194,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
 
         <div v-for="c in matchResult.matched" :key="c.qa_id" class="candidate">
           <div class="head"><span class="q">{{ c.question }}</span><span class="score">score {{ c.score }}</span></div>
-          <div class="meta">被问 {{ c.hit_count }} 次 · 质量自评 {{ c.quality }}/5 · {{ c.reason }}</div>
+          <div class="meta">被问 {{ c.hit_count }} 次 · {{ c.reason }}</div>
           <details>
             <summary>展开答案 / 追问 / STAR 要点</summary>
             <div class="body"><b>答案</b>\n{{ c.answer }}</div>
@@ -223,14 +228,15 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
           <div class="l1-head"><span style="flex:1">全部分类</span><span class="cnt">{{ catTotalCount }}题</span></div>
         </div>
         <div v-for="c in categories" :key="c.id" class="l1-item">
-          <div class="l1-head" @click="toggleCat(c.id)">
-            <span class="arrow" :class="{open: expandedCats[c.id]}">▶</span>
-            <span style="flex:1" :class="{active: filterCategoryId===c.id}" @click.stop="filterCategoryId=c.id;loadQas()">{{ c.name }}</span>
+          <div class="l1-head">
+            <span v-if="c.children && c.children.length" class="arrow" :class="{open: expandedCats[c.id]}" @click="toggleCat(c.id)">▶</span>
+            <span v-else class="arrow-spacer"></span>
+            <span style="flex:1" :class="{active: filterCategoryId===c.id}" @click="filterCategoryId=c.id;loadQas()">{{ c.name }}</span>
             <span class="cnt">{{ c.qa_count + c.children.reduce((s,x)=>s+x.qa_count,0) }}题</span>
             <button class="icon-btn" @click.stop="openCatEdit(c, null)">✏️</button>
             <button class="icon-btn" @click.stop="delCat(c)">🗑</button>
           </div>
-          <div v-show="expandedCats[c.id]">
+          <div v-show="c.children && c.children.length && expandedCats[c.id]">
             <div v-for="child in c.children" :key="child.id" class="l2-item" :class="{active: filterCategoryId===child.id}" @click="filterCategoryId=child.id;loadQas()">
               <span>{{ child.name }}</span>
               <span style="display:flex;gap:2px;align-items:center">
@@ -271,24 +277,22 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
           </div>
         </div>
         <table>
-          <thead><tr><th>问题</th><th>分类</th><th>标签</th><th>被问</th><th>质量</th><th>状态</th><th>操作</th></tr></thead>
+          <thead><tr><th>问题</th><th>分类</th><th>标签</th><th>被问</th><th>操作</th></tr></thead>
           <tbody>
             <tr v-for="qa in qas" :key="qa.id">
               <td style="max-width:280px">{{ qa.question }}</td>
-              <td style="white-space:nowrap;font-size:12.5px">{{ qa.category_l1 ? qa.category_l1 + (qa.category_l2 && qa.category_l2!==qa.category_l1 ? ' ▸ ' + qa.category_l2 : '') : '—' }}</td>
+              <td style="white-space:nowrap;font-size:12.5px">{{ qa.category_l1 ? (qa.category_l2 ? qa.category_l2 : qa.category_l1) : '—' }}</td>
               <td style="max-width:160px">
                 <span v-for="t in qa.tags" :key="t.id" class="tag-chip mini">{{ t.name }}</span>
                 <span v-if="!qa.tags?.length" style="color:#cbd5e1">—</span>
               </td>
               <td>{{ qa.hit_count }}</td>
-              <td>{{ qa.quality }}</td>
-              <td>{{ qa.status }}</td>
               <td style="white-space:nowrap">
                 <button class="icon-btn" @click="openQaEdit(qa)">✏️</button>
                 <button class="icon-btn" @click="delQa(qa)">🗑</button>
               </td>
             </tr>
-            <tr v-if="!qas.length"><td colspan="7" style="color:#94a3b8;text-align:center;padding:24px">当前筛选条件下暂无 QA，点击右上角新增或批量导入</td></tr>
+            <tr v-if="!qas.length"><td colspan="5" style="color:#94a3b8;text-align:center;padding:24px">当前筛选条件下暂无 QA，点击右上角新增或批量导入</td></tr>
           </tbody>
         </table>
       </div>
@@ -475,17 +479,19 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
             <option v-for="k in kbs" :key="k.id" :value="k.id">{{ k.name }}</option>
           </select>
         </label>
-        <label class="field"><span>分类（二级）</span>
+        <label class="field"><span>分类</span>
           <select class="input" v-model="qaForm.category_id">
             <option :value="null">（未分类）</option>
             <template v-for="c in qaFormCats" :key="c.id">
-              <option :value="c.id">{{ c.name }}</option>
-              <option v-for="child in c.children" :key="child.id" :value="child.id">{{ c.name }} ▸ {{ child.name }}</option>
+              <optgroup v-if="c.children && c.children.length" :label="c.name">
+                <option :value="c.id">{{ c.name }}</option>
+                <option v-for="child in c.children" :key="child.id" :value="child.id">{{ child.name }}</option>
+              </optgroup>
+              <option v-else :value="c.id">{{ c.name }}</option>
             </template>
           </select>
         </label>
         <label class="field full"><span>标准问题 *</span><input class="input" v-model="qaForm.question"></label>
-        <label class="field full"><span>变体问法（换行分隔，泛化匹配关键）</span><textarea class="input" rows="2" v-model="qaForm.question_aliases"></textarea></label>
         <label class="field full"><span>标签（可多选）</span>
           <div class="tag-select">
             <label v-for="t in tags" :key="t.id" class="tag-check" :class="{on: qaForm.tag_ids.includes(t.id)}">
@@ -495,12 +501,16 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
           </div>
         </label>
         <label class="field full"><span>答案 *</span><textarea class="input" rows="6" v-model="qaForm.answer"></textarea></label>
-        <label class="field full"><span>常见追问与应答</span><textarea class="input" rows="3" v-model="qaForm.follow_ups"></textarea></label>
-        <label class="field full"><span>STAR 要点 / 口播提醒</span><textarea class="input" rows="2" v-model="qaForm.star_hint"></textarea></label>
-        <label class="field"><span>状态</span>
-          <select class="input" v-model="qaForm.status"><option value="active">active</option><option value="draft">draft</option><option value="archived">archived</option></select>
+        <label class="field full"><span>变体问法（泛化匹配关键，一行一个）</span>
+          <div class="alias-rows">
+            <div v-for="(a, i) in qaForm.aliasRows" :key="i" class="alias-row">
+              <span class="alias-num">{{ i === 0 ? '变体问法' : `变体问法${i + 1}` }}</span>
+              <input class="input" v-model="qaForm.aliasRows[i]" placeholder="同一问题的其他问法">
+              <button v-if="i > 0" type="button" class="icon-btn" @click="qaForm.aliasRows.splice(i, 1)">✕</button>
+            </div>
+            <button type="button" class="btn sm ghost" @click="qaForm.aliasRows.push('')">＋ 变体问法</button>
+          </div>
         </label>
-        <label class="field"><span>质量自评（1-5）</span><input class="input" type="number" min="1" max="5" v-model.number="qaForm.quality"></label>
       </div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px">
         <button class="btn ghost" @click="qaModal=false">取消</button>
@@ -561,8 +571,11 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
           <select class="input" v-model="fromLogForm.category_id">
             <option :value="null">（未分类）</option>
             <template v-for="c in catsOf(fromLogForm.kb_id)" :key="c.id">
-              <option :value="c.id">{{ c.name }}</option>
-              <option v-for="child in c.children" :key="child.id" :value="child.id">{{ c.name }} ▸ {{ child.name }}</option>
+              <optgroup v-if="c.children && c.children.length" :label="c.name">
+                <option :value="c.id">{{ c.name }}</option>
+                <option v-for="child in c.children" :key="child.id" :value="child.id">{{ child.name }}</option>
+              </optgroup>
+              <option v-else :value="c.id">{{ c.name }}</option>
             </template>
           </select>
         </label>
@@ -575,7 +588,16 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
         </div>
       </label>
       <label class="field"><span>答案 *</span><textarea class="input" rows="6" v-model="fromLogForm.answer"></textarea></label>
-      <label class="field"><span>变体问法（换行分隔）</span><textarea class="input" rows="2" v-model="fromLogForm.question_aliases"></textarea></label>
+      <label class="field"><span>变体问法（一行一个）</span>
+        <div class="alias-rows">
+          <div v-for="(a, i) in fromLogForm.aliasRows" :key="i" class="alias-row">
+            <span class="alias-num">{{ i === 0 ? '变体问法' : `变体问法${i + 1}` }}</span>
+            <input class="input" v-model="fromLogForm.aliasRows[i]">
+            <button v-if="i > 0" type="button" class="icon-btn" @click="fromLogForm.aliasRows.splice(i, 1)">✕</button>
+          </div>
+          <button type="button" class="btn sm ghost" @click="fromLogForm.aliasRows.push('')">＋ 变体问法</button>
+        </div>
+      </label>
       <div style="display:flex;gap:10px;justify-content:flex-end">
         <button class="btn ghost" @click="fromLogModal=false">取消</button>
         <button class="btn" @click="saveFromLog" :disabled="!fromLogForm.answer.trim()">转正</button>
@@ -995,10 +1017,18 @@ createApp({
     },
     openQaEdit(qa) {
       this.qaForm = qa
-        ? { ...qa, tag_ids: (qa.tags || []).map(t => t.id) }
-        : { kb_id: this.kbId, category_id: null, tag_ids: [], question: '', question_aliases: '', answer: '', follow_ups: '', star_hint: '', status: 'active', quality: 3 };
+        ? { ...qa, tag_ids: (qa.tags || []).map(t => t.id),
+            aliasRows: this.splitAliases(qa.question_aliases) }
+        : { kb_id: this.kbId, category_id: null, tag_ids: [], question: '', aliasRows: [''], answer: '' };
       this.qaModal = true;
       this.loadCatsFor(this.qaForm.kb_id);
+    },
+    splitAliases(text) {
+      const rows = (text || '').split('\n').map(s => s.trim()).filter(Boolean);
+      return rows.length ? rows : [''];
+    },
+    joinAliases(rows) {
+      return (rows || []).map(s => (s || '').trim()).filter(Boolean).join('\n');
     },
     async onQaFormKbChange() {
       await this.loadCatsFor(this.qaForm.kb_id);
@@ -1015,7 +1045,7 @@ createApp({
     },
     async saveQa() {
       try {
-        const body = { kb_id: this.qaForm.kb_id, category_id: this.qaForm.category_id, tag_ids: this.qaForm.tag_ids || [], question: this.qaForm.question, question_aliases: this.qaForm.question_aliases, answer: this.qaForm.answer, follow_ups: this.qaForm.follow_ups, star_hint: this.qaForm.star_hint, status: this.qaForm.status, quality: this.qaForm.quality };
+        const body = { kb_id: this.qaForm.kb_id, category_id: this.qaForm.category_id, tag_ids: this.qaForm.tag_ids || [], question: this.qaForm.question, question_aliases: this.joinAliases(this.qaForm.aliasRows), answer: this.qaForm.answer };
         if (this.qaForm.id) await this.api('PUT', `/api/qas/${this.qaForm.id}`, body);
         else await this.api('POST', '/api/qas', body);
         this.qaModal = false; this.loadQas(); this.loadCategories(); this.loadTags();
@@ -1023,7 +1053,7 @@ createApp({
     },
     async delQa(qa) { if (confirm(`删除 QA「${qa.question}」？`)) { await this.api('DELETE', `/api/qas/${qa.id}`); this.loadQas(); this.loadCategories(); this.loadTags(); } },
     openFromLog(u) {
-      this.fromLogForm = { log_id: u.id, question: u.question, kb_id: this.kbId, category_id: null, tag_ids: [], answer: '', question_aliases: '', _original: u.question };
+      this.fromLogForm = { log_id: u.id, question: u.question, kb_id: this.kbId, category_id: null, tag_ids: [], answer: '', aliasRows: [''], _original: u.question };
       this.fromLogModal = true;
     },    async onFromLogKbChange() {
       await this.loadCatsFor(this.fromLogForm.kb_id);
@@ -1035,7 +1065,8 @@ createApp({
       try {
         await this.api('POST', `/api/qas/from_log/${this.fromLogForm.log_id}`, {
           kb_id: this.fromLogForm.kb_id, category_id: this.fromLogForm.category_id, tag_ids: this.fromLogForm.tag_ids,
-          question: this.fromLogForm.question, answer: this.fromLogForm.answer, question_aliases: this.fromLogForm.question_aliases,
+          question: this.fromLogForm.question, answer: this.fromLogForm.answer,
+          question_aliases: this.joinAliases(this.fromLogForm.aliasRows),
         });
         this.fromLogModal = false; this.loadStats(); this.loadCategories(); this.loadTags();
       } catch (e) { alert(e.message); }
