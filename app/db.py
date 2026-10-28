@@ -116,63 +116,86 @@ def _columns(conn: sqlite3.Connection, table: str) -> list[str]:
     return [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
 
 
-def _migrate_v2(conn: sqlite3.Connection) -> None:
-    """老库迁移：intent_l1/intent_l2/qa.l2_id → intent/intent_kb/qa.kb_id + category。
+def _migrate_v2_qa(conn: sqlite3.Connection) -> None:
+    """把 qa_v2（含 l2_id 的老表）搬进 v4 qa 表：建分类映射 + 逐行搬运 + 兜底。
 
-    - L1 → 一级分类；L2 → L1 下的二级分类；qa.l2_id → category_id
-    - 每个旧 L1 同时生成一个全局意图并挂载原库（保持路由层可用）
+    覆盖两种入口状态：
+    a) 完整 v2 库（intent_l1/intent_l2 存在）
+    b) 半迁移库（qa_v2 存在、v4 qa 表已建；intent_l1/l2 可能仍在）
+    幂等：qa 表已有同 id 的行跳过（INSERT OR IGNORE）。
     """
-    # ---- QA：l2_id -> kb_id + category_id（经 intent_l2→intent_l1 回溯）----
-    if _table_exists(conn, "qa") and "l2_id" in _columns(conn, "qa"):
-        conn.execute("ALTER TABLE qa RENAME TO qa_v2")
-        conn.executescript(SCHEMA)  # 老表已改名，此刻重建新表与索引才是安全的
-
-        # 分类：L1 → 一级，L2 → 二级
+    # 1) 分类映射：L1→一级分类、L2→二级分类（同名已存在则复用）
+    l2_to_cat: dict[int, int] = {}
+    if _table_exists(conn, "intent_l1") and _table_exists(conn, "intent_l2"):
         for l1 in conn.execute(
                 "SELECT DISTINCT l1.id, l1.kb_id, l1.name, l1.sort_order FROM intent_l1 l1 "
                 "JOIN intent_l2 l2 ON l2.l1_id = l1.id ORDER BY l1.sort_order, l1.id").fetchall():
-            cur = conn.execute(
-                "INSERT INTO category(kb_id, parent_id, name, sort_order) VALUES(?,NULL,?,?)",
-                (l1["kb_id"], l1["name"], l1["sort_order"]))
-            parent_cat_id = cur.lastrowid
+            row = conn.execute(
+                "SELECT id FROM category WHERE kb_id=? AND parent_id IS NULL AND name=?",
+                (l1["kb_id"], l1["name"])).fetchone()
+            if row:
+                parent_cat_id = row["id"]
+            else:
+                cur = conn.execute(
+                    "INSERT INTO category(kb_id, parent_id, name, sort_order) VALUES(?,NULL,?,?)",
+                    (l1["kb_id"], l1["name"], l1["sort_order"]))
+                parent_cat_id = cur.lastrowid
             for l2 in conn.execute(
                     "SELECT id, name, sort_order FROM intent_l2 WHERE l1_id=? ORDER BY sort_order, id",
                     (l1["id"],)).fetchall():
-                conn.execute(
-                    "INSERT INTO category(kb_id, parent_id, name, sort_order) VALUES(?,?,?,?)",
-                    (l1["kb_id"], parent_cat_id, l2["name"], l2["sort_order"]))
+                crow = conn.execute(
+                    "SELECT id FROM category WHERE kb_id=? AND parent_id=? AND name=?",
+                    (l1["kb_id"], parent_cat_id, l2["name"])).fetchone()
+                if crow:
+                    l2_to_cat[l2["id"]] = crow["id"]
+                else:
+                    cur = conn.execute(
+                        "INSERT INTO category(kb_id, parent_id, name, sort_order) VALUES(?,?,?,?)",
+                        (l1["kb_id"], parent_cat_id, l2["name"], l2["sort_order"]))
+                    l2_to_cat[l2["id"]] = cur.lastrowid
 
+    # 2) 逐行搬运：优先 l2→分类映射；映射不到经 intent 表回溯库；再不行进默认库、分类置空
+    default_kb = conn.execute("SELECT id FROM kb ORDER BY is_default DESC, id LIMIT 1").fetchone()
+    default_kb_id = default_kb["id"] if default_kb else None
+
+    for q in conn.execute("SELECT * FROM qa_v2 ORDER BY id").fetchall():
+        kb_id, category_id = None, None
+        if q["l2_id"] is not None:
+            cat_id = l2_to_cat.get(q["l2_id"])
+            if cat_id:
+                category_id = cat_id
+                cat_row = conn.execute("SELECT kb_id FROM category WHERE id=?", (cat_id,)).fetchone()
+                kb_id = cat_row["kb_id"] if cat_row else None
+            elif _table_exists(conn, "intent_l2"):
+                row = conn.execute(
+                    "SELECT l1.kb_id FROM intent_l2 l2 JOIN intent_l1 l1 ON l2.l1_id=l1.id WHERE l2.id=?",
+                    (q["l2_id"],)).fetchone()
+                kb_id = row["kb_id"] if row else None
+        if kb_id is None:
+            kb_id = default_kb_id
         conn.execute(
-            "INSERT INTO qa(id, kb_id, category_id, question, question_aliases, answer, follow_ups, "
+            "INSERT OR IGNORE INTO qa(id, kb_id, category_id, question, question_aliases, answer, follow_ups, "
             "star_hint, status, hit_count, last_asked_at, quality, created_at, updated_at) "
-            "SELECT qa.id, l1.kb_id, cat.id, qa.question, qa.question_aliases, qa.answer, qa.follow_ups, "
-            "qa.star_hint, qa.status, qa.hit_count, qa.last_asked_at, qa.quality, qa.created_at, qa.updated_at "
-            "FROM qa_v2 qa JOIN intent_l2 l2 ON qa.l2_id=l2.id JOIN intent_l1 l1 ON l2.l1_id=l1.id "
-            "JOIN category cat ON cat.parent_id IS NOT NULL AND cat.name=l2.name "
-            "JOIN category pcat ON pcat.id=cat.parent_id AND pcat.name=l1.name AND pcat.kb_id=l1.kb_id")
-        conn.execute("DROP TABLE qa_v2")
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (q["id"], kb_id, category_id, q["question"], q["question_aliases"], q["answer"],
+             q["follow_ups"], q["star_hint"], q["status"], q["hit_count"], q["last_asked_at"],
+             q["quality"], q["created_at"], q["updated_at"]))
+    # qa_v2 保留作归档（不 DROP），数据核对无误后可手动清理
 
-    # ---- 意图：每个旧 L1 → 一个全局意图（同名合并），挂到原库 ----
-    if _table_exists(conn, "intent_l1"):
-        for l1 in conn.execute("SELECT * FROM intent_l1 ORDER BY sort_order, id").fetchall():
-            row = conn.execute("SELECT id FROM intent WHERE name=?", (l1["name"],)).fetchone()
-            if row:
-                intent_id = row["id"]
-            else:
-                cur = conn.execute(
-                    "INSERT INTO intent(name, description, sort_order) VALUES(?,?,?)",
-                    (l1["name"], l1["description"], l1["sort_order"]))
-                intent_id = cur.lastrowid
-            conn.execute("INSERT OR IGNORE INTO intent_kb(intent_id, kb_id) VALUES(?,?)",
-                         (intent_id, l1["kb_id"]))
 
-    # ---- query_log：补 intent_id 列（旧列 l1_id/l2_id 保留作历史数据）----
-    if _table_exists(conn, "query_log") and "intent_id" not in _columns(conn, "query_log"):
-        conn.execute("ALTER TABLE query_log ADD COLUMN intent_id INTEGER")
-
-    # ---- 清理旧表 ----
-    conn.execute("DROP TABLE IF EXISTS intent_l2")
-    conn.execute("DROP TABLE IF EXISTS intent_l1")
+def _migrate_v2_intents(conn: sqlite3.Connection) -> None:
+    """每个旧 L1 → 一个全局意图（同名合并），挂到原库。"""
+    for l1 in conn.execute("SELECT * FROM intent_l1 ORDER BY sort_order, id").fetchall():
+        row = conn.execute("SELECT id FROM intent WHERE name=?", (l1["name"],)).fetchone()
+        if row:
+            intent_id = row["id"]
+        else:
+            cur = conn.execute(
+                "INSERT INTO intent(name, description, sort_order) VALUES(?,?,?)",
+                (l1["name"], l1["description"], l1["sort_order"]))
+            intent_id = cur.lastrowid
+        conn.execute("INSERT OR IGNORE INTO intent_kb(intent_id, kb_id) VALUES(?,?)",
+                     (intent_id, l1["kb_id"]))
 
 
 def get_conn() -> sqlite3.Connection:
@@ -199,25 +222,55 @@ def tx():
         raise
 
 
+def _backup_db() -> None:
+    """迁移前备份：先 checkpoint WAL，再拷贝主文件，保证备份含全部已提交数据。"""
+    try:
+        conn = get_conn()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        import shutil
+        import time as _time
+        stamp = _time.strftime("%Y%m%d-%H%M%S")
+        shutil.copy(config.DB_PATH, f"{config.DB_PATH}.bak-{stamp}")
+    except Exception as e:
+        print(f"[db] 迁移前备份失败（继续执行迁移）: {e}")
+
+
 def init_db() -> None:
     conn = get_conn()
-    legacy = _table_exists(conn, "intent_l1") or (
-        _table_exists(conn, "qa") and "l2_id" in _columns(conn, "qa"))
-    if legacy:
-        # 备份老库文件后再迁移
-        try:
-            import shutil
-            shutil.copy(config.DB_PATH, config.DB_PATH + ".bak-v2")
-        except Exception:
-            pass
-        _migrate_v2(conn)  # 迁移内部会在合适时机执行 SCHEMA（老 qa 表必须先改名）
-    else:
-        conn.executescript(SCHEMA)
-        # v3 → v4：qa 表缺 category_id 时补列（CREATE TABLE IF NOT EXISTS 不会改已有表）
-        if _table_exists(conn, "qa") and "category_id" not in _columns(conn, "qa"):
-            conn.execute("ALTER TABLE qa ADD COLUMN category_id INTEGER REFERENCES category(id) ON DELETE SET NULL")
+    v2_qa = _table_exists(conn, "qa") and "l2_id" in _columns(conn, "qa")
+    if v2_qa:
+        # 老 v2 qa 表结构与 v4 SCHEMA 索引冲突，必须先改名再执行 SCHEMA
+        _backup_db()
+        conn.execute("ALTER TABLE qa RENAME TO qa_v2")
+    conn.executescript(SCHEMA)  # 全部 IF NOT EXISTS：对已有表无副作用，对缺失表补建
+
+    half_migrated = _table_exists(conn, "qa_v2")
+    legacy_intents = _table_exists(conn, "intent_l1")
+    if v2_qa or half_migrated or legacy_intents:
+        if not v2_qa:  # v2_qa 场景在上面已备份过
+            _backup_db()
+        if half_migrated:
+            # v2 搬运（含 half_migrated 自愈：qa_v2 存在、新 qa 可能已有部分数据）
+            _migrate_v2_qa(conn)
+        if legacy_intents:
+            _migrate_v2_intents(conn)
+        # 清理旧结构表（qa_v2 保留作归档，方便人工核对；确认无误后可手动 DROP）
+        conn.execute("DROP TABLE IF EXISTS intent_l2")
+        conn.execute("DROP TABLE IF EXISTS intent_l1")
+        conn.commit()
+
+    # v3 → v4：qa 表缺 category_id 时补列（CREATE TABLE IF NOT EXISTS 不会改已有表）
+    if _table_exists(conn, "qa") and "category_id" not in _columns(conn, "qa"):
+        conn.execute("ALTER TABLE qa ADD COLUMN category_id INTEGER "
+                     "REFERENCES category(id) ON DELETE SET NULL")
     conn.execute(INDEX_QA_CATEGORY)
-    # 默认知识库：面试FAQ（保持向后兼容：仅当表空时创建）
+
+    # query_log：补 intent_id 列（历史 l1_id/l2_id 列保留）
+    if _table_exists(conn, "query_log") and "intent_id" not in _columns(conn, "query_log"):
+        conn.execute("ALTER TABLE query_log ADD COLUMN intent_id INTEGER")
+
+    conn.commit()
+    # 默认知识库：面试FAQ（仅当表空时创建）
     count = conn.execute("SELECT COUNT(*) AS c FROM kb").fetchone()["c"]
     if count == 0:
         conn.execute(
