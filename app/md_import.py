@@ -89,43 +89,20 @@ def parse_markdown(text: str) -> dict:
 
 
 def import_parsed(kb_id: int, parsed: dict) -> dict:
-    """把 parse_markdown 的结果写入数据库：建缺失的 L1/L2，导入 QA（跳过同库同问题）。"""
+    """把 parse_markdown 的结果写入指定知识库：QA 直接入库（跳过同库同问题）。
+
+    `# 大类` 标题仅作分组展示用（扁平意图体系下 QA 直接挂库），不再建意图。
+    """
     from .main import QAIn, create_qa  # 延迟导入避免循环依赖
 
     conn = db.get_conn()
-    created_l1, created_l2, imported, skipped, failed = 0, 0, 0, 0, 0
+    imported, skipped, failed = 0, 0, 0
+
+    existing = {
+        r["question"] for r in conn.execute(
+            "SELECT question FROM qa WHERE kb_id=?", (kb_id,)).fetchall()}
 
     for sec in parsed["sections"]:
-        row = conn.execute(
-            "SELECT id FROM intent_l1 WHERE kb_id=? AND name=?", (kb_id, sec["name"])).fetchone()
-        if row:
-            l1_id = row["id"]
-        else:
-            with db.tx() as t:
-                cur = t.execute(
-                    "INSERT INTO intent_l1(kb_id, name, description) VALUES(?,?,?)",
-                    (kb_id, sec["name"], sec["description"]))
-                l1_id = cur.lastrowid
-            created_l1 += 1
-
-        # 导入专用 L2（不存在则建），避免把批量题塞进手工管理的子意图
-        l2row = conn.execute(
-            "SELECT id FROM intent_l2 WHERE l1_id=? AND name=?", (l1_id, "导入题集")).fetchone()
-        if l2row:
-            l2_id = l2row["id"]
-        else:
-            with db.tx() as t:
-                cur = t.execute(
-                    "INSERT INTO intent_l2(l1_id, name, description) VALUES(?,?,?)",
-                    (l1_id, "导入题集", f"「{sec['name']}」批量导入的题目"))
-                l2_id = cur.lastrowid
-            created_l2 += 1
-
-        existing = {
-            r["question"] for r in conn.execute(
-                "SELECT qa.question FROM qa JOIN intent_l2 l2 ON qa.l2_id=l2.id "
-                "JOIN intent_l1 l1 ON l2.l1_id=l1.id WHERE l1.kb_id=?", (kb_id,)).fetchall()}
-
         for q in sec["questions"]:
             if not q["question"]:
                 continue
@@ -134,7 +111,7 @@ def import_parsed(kb_id: int, parsed: dict) -> dict:
                 continue
             try:
                 create_qa(QAIn(
-                    l2_id=l2_id, question=q["question"], question_aliases=q["question_aliases"],
+                    kb_id=kb_id, question=q["question"], question_aliases=q["question_aliases"],
                     answer=q["answer"] or "（待补充）", follow_ups=q["follow_ups"],
                     star_hint=q["star_hint"], quality=q["quality"],
                 ))
@@ -145,6 +122,5 @@ def import_parsed(kb_id: int, parsed: dict) -> dict:
 
     return {
         "imported": imported, "skipped_exist": skipped, "failed": failed,
-        "created_l1": created_l1, "created_l2": created_l2,
         "errors": parsed["errors"], "total": parsed["total"],
     }
