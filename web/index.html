@@ -94,6 +94,20 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
 .ok-tip { color: #16a34a; font-size: 13px; }
 .section-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
 .section-title h3 { font-size: 16px; }
+.settings-grid { display: grid; grid-template-columns: 1fr; gap: 0; }
+.tag-cloud { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 8px 12px; }
+.tag-chip { display: inline-flex; align-items: center; gap: 4px; background: #f1f5f9; border: 1px solid #e2e8f0; color: #475569; border-radius: 999px; padding: 3px 10px; font-size: 12.5px; cursor: pointer; user-select: none; }
+.tag-chip:hover { border-color: #a5b4fc; }
+.tag-chip.active { background: #eef2ff; border-color: #818cf8; color: #3730a3; font-weight: 600; }
+.tag-chip .tag-cnt { font-size: 11px; color: #94a3b8; background: #e2e8f0; border-radius: 999px; padding: 0 6px; }
+.tag-chip .tag-ops { display: none; }
+.tag-chip:hover .tag-ops { display: inline-flex; }
+.tag-chip.mini { font-size: 11px; padding: 1px 8px; cursor: default; }
+.tag-select { display: flex; flex-wrap: wrap; gap: 8px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px; }
+.tag-check { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: #475569; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 999px; padding: 3px 10px; cursor: pointer; }
+.tag-check.on { background: #eef2ff; border-color: #818cf8; color: #3730a3; }
+.l1-head .active, .l1-head span.active { color: #3730a3; font-weight: 700; }
+.l1-item.active .l1-head { background: #eef2ff; }
 </style>
 </head>
 <body>
@@ -117,11 +131,11 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
     <button class="page-btn" :class="{active: page==='match'}" @click="page='match'">匹配</button>
     <button class="page-btn" :class="{active: page==='manage'}" @click="goManage">题库管理</button>
     <button class="page-btn" :class="{active: page==='stats'}" @click="goStats">复盘统计</button>
+    <button class="page-btn" :class="{active: page==='settings'}" @click="goSettings">⚙ 设置</button>
     <span class="spacer"></span>
     <select class="kb-select" v-model="kbId" @change="onKbSwitch">
       <option v-for="k in kbs" :key="k.id" :value="k.id">{{ k.name }}（{{ k.qa_count }}题）</option>
     </select>
-    <button class="page-btn" @click="kbModal=true">＋库</button>
     <button class="logout" @click="logout">退出</button>
   </div>
 
@@ -131,7 +145,6 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
       <div class="card">
         <div class="section-title"><h3>面试官问了你什么？</h3>
           <span style="flex:1"></span>
-          <button class="btn sm ghost" @click="openSettings">⚙ 匹配参数</button>
           <span style="font-size:12px;color:#94a3b8">当前库：{{ currentKb?.name }}</span>
         </div>
         <div class="ask-box">
@@ -205,39 +218,68 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
     <!-- 题库管理页 -->
     <div v-if="page==='manage'" class="manage-grid">
       <div class="tree-col">
-        <div class="section-title"><h3>意图列表</h3><button class="btn sm ghost" @click="openIntentEdit(null)">＋意图</button></div>
-        <p style="font-size:12px;color:#94a3b8;margin:0 0 8px 4px">
-          意图是全局路由层：识别到意图后，在其挂载的知识库中全量检索答案。一个意图可挂多个库。</p>
-        <div v-for="it in intents" :key="it.id" class="l1-item">
-          <div class="l1-head">
-            <span style="flex:1">{{ it.name }}</span>
-            <span class="cnt">{{ it.qa_count }}题</span>
-            <button class="icon-btn" @click.stop="openIntentEdit(it)">✏️</button>
-            <button class="icon-btn" @click.stop="delIntent(it)">🗑</button>
+        <div class="section-title"><h3>分类</h3><button class="btn sm ghost" @click="openCatEdit(null, null)">＋分类</button></div>
+        <div class="l1-item" :class="{active: filterCategoryId==='all'}" @click="filterCategoryId='all';loadQas()">
+          <div class="l1-head"><span style="flex:1">全部分类</span><span class="cnt">{{ catTotalCount }}题</span></div>
+        </div>
+        <div v-for="c in categories" :key="c.id" class="l1-item">
+          <div class="l1-head" @click="toggleCat(c.id)">
+            <span class="arrow" :class="{open: expandedCats[c.id]}">▶</span>
+            <span style="flex:1" :class="{active: filterCategoryId===c.id}" @click.stop="filterCategoryId=c.id;loadQas()">{{ c.name }}</span>
+            <span class="cnt">{{ c.qa_count + c.children.reduce((s,x)=>s+x.qa_count,0) }}题</span>
+            <button class="icon-btn" @click.stop="openCatEdit(c, null)">✏️</button>
+            <button class="icon-btn" @click.stop="delCat(c)">🗑</button>
           </div>
-          <div style="padding:4px 12px 8px;font-size:12px;color:#64748b">
-            <span v-if="it.description">{{ it.description }} · </span>
-            <span style="color:#4f46e5">{{ it.kb_ids.length ? it.kbNames.join('、') : '⚠ 未挂载知识库' }}</span>
+          <div v-show="expandedCats[c.id]">
+            <div v-for="child in c.children" :key="child.id" class="l2-item" :class="{active: filterCategoryId===child.id}" @click="filterCategoryId=child.id;loadQas()">
+              <span>{{ child.name }}</span>
+              <span style="display:flex;gap:2px;align-items:center">
+                <span class="cnt">{{ child.qa_count }}题</span>
+                <button class="icon-btn" @click.stop="openCatEdit(child, c)">✏️</button>
+                <button class="icon-btn" @click.stop="delCat(child)">🗑</button>
+              </span>
+            </div>
+            <div class="l2-item" @click.stop="openCatEdit(null, c)" style="color:#6366f1">＋ 子分类</div>
           </div>
         </div>
-        <div v-if="!intents.length" style="color:#94a3b8;font-size:13px;padding:12px">还没有意图，点击右上角创建</div>
+        <div v-if="!categories.length" style="color:#94a3b8;font-size:13px;padding:12px">还没有分类，点击右上角创建</div>
+
+        <div class="section-title" style="margin-top:18px"><h3>标签</h3><button class="btn sm ghost" @click="openTagEdit(null)">＋标签</button></div>
+        <div class="l2-item" :class="{active: filterTagId==='all'}" style="padding-left:8px" @click="filterTagId='all';loadQas()">
+          <span>全部</span>
+        </div>
+        <div class="tag-cloud">
+          <span v-for="t in tags" :key="t.id" class="tag-chip" :class="{active: filterTagId===t.id}" @click="filterTagId = filterTagId===t.id ? 'all' : t.id; loadQas()">
+            {{ t.name }}<span class="tag-cnt">{{ t.usage_count }}</span>
+            <span class="tag-ops" @click.stop>
+              <button class="icon-btn" style="font-size:11px;padding:0 2px" @click="openTagEdit(t)">✏️</button>
+              <button class="icon-btn" style="font-size:11px;padding:0 2px" @click="delTag(t)">✕</button>
+            </span>
+          </span>
+        </div>
+        <div v-if="!tags.length" style="color:#94a3b8;font-size:13px;padding:0 0 12px 12px">还没有标签</div>
       </div>
 
       <div class="card">
         <div class="section-title">
-          <h3>QA 列表 <span style="font-size:12px;color:#94a3b8;font-weight:400">当前库：{{ currentKb?.name }}</span></h3>
+          <h3>QA 列表 <span style="font-size:12px;color:#94a3b8;font-weight:400">{{ qaFilterDesc }}</span></h3>
           <div style="display:flex;gap:8px">
             <input class="input" style="width:180px" placeholder="🔍 关键词" v-model="keyword" @keyup.enter="loadQas()">
-            <button class="btn sm ghost" @click="keyword='';loadQas()">重置</button>
+            <button class="btn sm ghost" @click="resetFilter">重置</button>
             <button class="btn sm ghost" @click="openImport">📥 批量导入</button>
             <button class="btn sm" @click="openQaEdit(null)">＋ 新增QA</button>
           </div>
         </div>
         <table>
-          <thead><tr><th>问题</th><th>被问</th><th>质量</th><th>状态</th><th>操作</th></tr></thead>
+          <thead><tr><th>问题</th><th>分类</th><th>标签</th><th>被问</th><th>质量</th><th>状态</th><th>操作</th></tr></thead>
           <tbody>
             <tr v-for="qa in qas" :key="qa.id">
-              <td style="max-width:340px">{{ qa.question }}</td>
+              <td style="max-width:280px">{{ qa.question }}</td>
+              <td style="white-space:nowrap;font-size:12.5px">{{ qa.category_l1 ? qa.category_l1 + (qa.category_l2 && qa.category_l2!==qa.category_l1 ? ' ▸ ' + qa.category_l2 : '') : '—' }}</td>
+              <td style="max-width:160px">
+                <span v-for="t in qa.tags" :key="t.id" class="tag-chip mini">{{ t.name }}</span>
+                <span v-if="!qa.tags?.length" style="color:#cbd5e1">—</span>
+              </td>
               <td>{{ qa.hit_count }}</td>
               <td>{{ qa.quality }}</td>
               <td>{{ qa.status }}</td>
@@ -246,9 +288,76 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
                 <button class="icon-btn" @click="delQa(qa)">🗑</button>
               </td>
             </tr>
-            <tr v-if="!qas.length"><td colspan="5" style="color:#94a3b8;text-align:center;padding:24px">当前库暂无 QA，点击右上角新增或批量导入</td></tr>
+            <tr v-if="!qas.length"><td colspan="7" style="color:#94a3b8;text-align:center;padding:24px">当前筛选条件下暂无 QA，点击右上角新增或批量导入</td></tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- 系统设置页 -->
+    <div v-if="page==='settings'" class="settings-grid">
+      <div class="card">
+        <div class="section-title"><h3>🧭 意图管理</h3><button class="btn sm" @click="openIntentEdit(null)">＋意图</button></div>
+        <p style="font-size:12px;color:#94a3b8;margin:0 0 10px 2px;line-height:1.6">
+          意图是全局路由层：匹配时 LLM 先识别问题属于哪个意图，再到该意图挂载的知识库中全量检索。一个意图可挂多个库。</p>
+        <table>
+          <thead><tr><th>意图</th><th>挂载知识库</th><th>覆盖题数</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr v-for="it in intents" :key="it.id">
+              <td>
+                <b style="font-size:13.5px">{{ it.name }}</b>
+                <div v-if="it.description" style="font-size:12px;color:#94a3b8">{{ it.description }}</div>
+              </td>
+              <td style="font-size:12.5px;color:#4f46e5">{{ it.kb_ids.length ? it.kbNames.join('、') : '⚠ 未挂载' }}</td>
+              <td>{{ it.qa_count }}</td>
+              <td style="white-space:nowrap">
+                <button class="icon-btn" @click="openIntentEdit(it)">✏️</button>
+                <button class="icon-btn" @click="delIntent(it)">🗑</button>
+              </td>
+            </tr>
+            <tr v-if="!intents.length"><td colspan="4" style="color:#94a3b8;text-align:center;padding:20px">还没有意图</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="section-title"><h3>📚 知识库管理</h3><button class="btn sm" @click="openKbNew">＋知识库</button></div>
+        <table>
+          <thead><tr><th>名称</th><th>描述</th><th>题数</th><th>默认</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr v-for="k in kbs" :key="k.id">
+              <td><b>{{ k.name }}</b></td>
+              <td style="font-size:12.5px;color:#64748b">{{ k.description || '—' }}</td>
+              <td>{{ k.qa_count }}</td>
+              <td>{{ k.is_default ? '✅' : '' }}</td>
+              <td style="white-space:nowrap">
+                <button class="icon-btn" @click="openKbEdit(k)">✏️</button>
+                <button class="icon-btn" @click="delKb(k)">🗑</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="section-title"><h3>⚙ 匹配参数</h3><span v-if="settingsSaved" class="ok-tip">已保存</span></div>
+        <p style="font-size:12px;color:#94a3b8;margin:0 0 12px 2px;line-height:1.6">
+          保存后立即生效（存服务器数据库，无需重启）。阈值调高 → 更严格、宁可进新问题池；调低 → 更容易出候选。</p>
+        <div class="form-grid">
+          <label class="field"><span>关键词直配线 keyword_direct_score（默认 0.7，全库重合度≥此值直接命中、免 LLM）</span>
+            <input class="input" type="number" step="0.05" min="0" max="1" v-model="settingsForm.keyword_direct_score"></label>
+          <label class="field"><span>LLM 精配最低命中分 match_min_score（默认 0.7）</span>
+            <input class="input" type="number" step="0.05" min="0" max="1" v-model="settingsForm.match_min_score"></label>
+          <label class="field"><span>关键词路由定位线 route_min_score（默认 0.3，仅 LLM 不可用时生效）</span>
+            <input class="input" type="number" step="0.05" min="0" max="1" v-model="settingsForm.route_min_score"></label>
+          <label class="field"><span>关键词兜底命中线 keyword_match_min_score（默认 0.7）</span>
+            <input class="input" type="number" step="0.05" min="0" max="1" v-model="settingsForm.keyword_match_min_score"></label>
+          <label class="field"><span>默认返回条数 default_top_k（1~10）</span>
+            <input class="input" type="number" step="1" min="1" max="10" v-model="settingsForm.default_top_k"></label>
+        </div>
+        <div style="display:flex;justify-content:flex-end">
+          <button class="btn" @click="saveSettings" :disabled="settingsSaving">{{ settingsSaving ? '保存中…' : '保存参数' }}</button>
+        </div>
       </div>
     </div>
 
@@ -324,18 +433,67 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
     </div>
   </div>
 
+  <!-- 分类编辑 -->
+  <div v-if="catModal" class="modal-mask" @click.self="catModal=false">
+    <div class="modal">
+      <h3 style="margin-bottom:14px">{{ catForm.id ? '编辑分类' : (catForm.parent_id ? '新增子分类' : '新增一级分类') }}</h3>
+      <label class="field"><span>分类名称</span><input class="input" v-model="catForm.name" placeholder="如：技术原理"></label>
+      <label class="field" v-if="!catForm.id"><span>父分类（一级留空；二级选择一级分类）</span>
+        <select class="input" v-model="catForm.parent_id">
+          <option :value="null">（一级分类）</option>
+          <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
+        </select>
+      </label>
+      <p v-if="catForm.id" style="font-size:12px;color:#94a3b8;margin-bottom:12px">
+        编辑时不改层级；删除分类会连带删除其子分类，QA 本身保留（分类置空）。</p>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button class="btn ghost" @click="catModal=false">取消</button>
+        <button class="btn" @click="saveCat" :disabled="!catForm.name.trim()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 标签编辑 -->
+  <div v-if="tagModal" class="modal-mask" @click.self="tagModal=false">
+    <div class="modal">
+      <h3 style="margin-bottom:14px">{{ tagForm.id ? '编辑标签' : '新增标签' }}</h3>
+      <label class="field"><span>标签名称</span><input class="input" v-model="tagForm.name" placeholder="如：高频题 / 待完善"></label>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button class="btn ghost" @click="tagModal=false">取消</button>
+        <button class="btn" @click="saveTag" :disabled="!tagForm.name.trim()">保存</button>
+      </div>
+    </div>
+  </div>
+
   <!-- QA 抽屉 -->
   <div v-if="qaModal" class="drawer-mask" @click.self="qaModal=false">
     <div class="drawer">
       <h3>{{ qaForm.id ? '编辑 QA' : '新增 QA' }}</h3>
       <div class="form-grid">
-        <label class="field full"><span>所属知识库</span>
-          <select class="input" v-model="qaForm.kb_id">
+        <label class="field"><span>所属知识库</span>
+          <select class="input" v-model="qaForm.kb_id" @change="onQaFormKbChange">
             <option v-for="k in kbs" :key="k.id" :value="k.id">{{ k.name }}</option>
+          </select>
+        </label>
+        <label class="field"><span>分类（二级）</span>
+          <select class="input" v-model="qaForm.category_id">
+            <option :value="null">（未分类）</option>
+            <template v-for="c in qaFormCats" :key="c.id">
+              <option :value="c.id">{{ c.name }}</option>
+              <option v-for="child in c.children" :key="child.id" :value="child.id">{{ c.name }} ▸ {{ child.name }}</option>
+            </template>
           </select>
         </label>
         <label class="field full"><span>标准问题 *</span><input class="input" v-model="qaForm.question"></label>
         <label class="field full"><span>变体问法（换行分隔，泛化匹配关键）</span><textarea class="input" rows="2" v-model="qaForm.question_aliases"></textarea></label>
+        <label class="field full"><span>标签（可多选）</span>
+          <div class="tag-select">
+            <label v-for="t in tags" :key="t.id" class="tag-check" :class="{on: qaForm.tag_ids.includes(t.id)}">
+              <input type="checkbox" :value="t.id" v-model="qaForm.tag_ids"> {{ t.name }}
+            </label>
+            <span v-if="!tags.length" style="font-size:12.5px;color:#94a3b8">还没有标签，可在左侧标签区创建</span>
+          </div>
+        </label>
         <label class="field full"><span>答案 *</span><textarea class="input" rows="6" v-model="qaForm.answer"></textarea></label>
         <label class="field full"><span>常见追问与应答</span><textarea class="input" rows="3" v-model="qaForm.follow_ups"></textarea></label>
         <label class="field full"><span>STAR 要点 / 口播提醒</span><textarea class="input" rows="2" v-model="qaForm.star_hint"></textarea></label>
@@ -356,8 +514,8 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
     <div class="drawer" style="width:min(680px,94vw)">
       <h3>📥 Markdown 批量导入</h3>
       <p style="font-size:12.5px;color:#64748b;line-height:1.7;margin-bottom:10px">
-        格式：<code># 分组名</code>（仅作预览分组，题目全部进入<b>当前选中的知识库</b>）·
-        <code>## 问题</code>（→ QA）· 字段行 <code>- 别名: / - 答案: / - 追问: / - STAR: / - 质量:</code>（别名可多行）·
+        格式：<code># 一级分类</code>（不存在会自动创建）·
+        <code>## 问题</code>（→ QA）· 字段行 <code>- 标签: / - 别名: / - 答案: / - 追问: / - STAR: / - 质量:</code>（标签逗号/顿号分隔，别名可多行）·
         其余正文自动追加到答案。同库同问题自动跳过。
         <a href="#" @click.prevent="importExample" style="color:#4f46e5">填入示例</a>
       </p>
@@ -370,41 +528,19 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
       </div>
       <div v-if="importPreview" class="route-chain" style="background:#f0fdf4;border-color:#86efac;color:#166534">
         <b>预览</b><span>共 {{ importPreview.total }} 题 / {{ importPreview.sections.length }} 个大类</span>
-        <span v-for="s in importPreview.sections" :key="s.l1" style="font-size:12px">{{ s.l1 }}({{ s.count }})</span>
+        <span v-for="s in importPreview.sections" :key="s.name" style="font-size:12px">{{ s.name }}({{ s.count }})</span>
         <span v-if="importPreview.errors.length" style="color:#b45309">⚠ {{ importPreview.errors.length }} 条警告</span>
       </div>
       <div v-if="importResult" class="route-chain" :style="importResult.failed ? 'background:#fef2f2;border-color:#fca5a5;color:#991b1b' : 'background:#f0fdf4;border-color:#86efac;color:#166534'">
         <b>结果</b>
         <span>导入 {{ importResult.imported }} · 跳过已存在 {{ importResult.skipped_exist }} · 失败 {{ importResult.failed }}</span>
+        <span v-if="importResult.created_categories">新建分类 {{ importResult.created_categories }}</span>
+        <span v-if="importResult.created_tags">新建标签 {{ importResult.created_tags }}</span>
       </div>
       <div style="display:flex;gap:10px;justify-content:flex-end">
         <button class="btn ghost" @click="importModal=false">关闭</button>
         <button class="btn ghost" @click="previewImport" :disabled="!importText.trim()">校验预览</button>
         <button class="btn" @click="doImport" :disabled="!importText.trim() || importing">{{ importing ? '导入中…' : '确认导入' }}</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 匹配参数弹窗 -->
-  <div v-if="settingsModal" class="modal-mask" @click.self="settingsModal=false">
-    <div class="modal" style="width:min(420px,92vw)">
-      <h3>⚙ 匹配参数</h3>
-      <p style="font-size:12.5px;color:#64748b;line-height:1.7;margin-bottom:14px">
-        保存后立即生效（存服务器数据库，无需重启）。取值 0~1；调高 → 更严格、宁可进新问题池；调低 → 更容易出候选。
-      </p>
-      <label class="field"><span>关键词直配线 keyword_direct_score（默认 0.7，全库重合度≥此值直接命中、免 LLM）</span>
-        <input class="input" type="number" step="0.05" min="0" max="1" v-model="settingsForm.keyword_direct_score"></label>
-      <label class="field"><span>LLM 精配最低命中分 match_min_score（默认 0.7）</span>
-        <input class="input" type="number" step="0.05" min="0" max="1" v-model="settingsForm.match_min_score"></label>
-      <label class="field"><span>关键词路由定位线 route_min_score（默认 0.3，仅 LLM 不可用时生效）</span>
-        <input class="input" type="number" step="0.05" min="0" max="1" v-model="settingsForm.route_min_score"></label>
-      <label class="field"><span>关键词兜底命中线 keyword_match_min_score（默认 0.7）</span>
-        <input class="input" type="number" step="0.05" min="0" max="1" v-model="settingsForm.keyword_match_min_score"></label>
-      <label class="field"><span>默认返回条数 default_top_k（1~10）</span>
-        <input class="input" type="number" step="1" min="1" max="10" v-model="settingsForm.default_top_k"></label>
-      <div style="display:flex;gap:10px;justify-content:flex-end">
-        <button class="btn ghost" @click="settingsModal=false">取消</button>
-        <button class="btn" @click="saveSettings" :disabled="settingsSaving">{{ settingsSaving ? '保存中…' : '保存' }}</button>
       </div>
     </div>
   </div>
@@ -415,10 +551,28 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
       <h3>新问题转正为 QA</h3>
       <p style="font-size:13px;color:#64748b;margin-bottom:14px">原话：{{ fromLogForm._original }}</p>
       <label class="field"><span>标准化问题（默认用原话，可改写）</span><input class="input" v-model="fromLogForm.question"></label>
-      <label class="field"><span>归入知识库</span>
-        <select class="input" v-model="fromLogForm.kb_id">
-          <option v-for="k in kbs" :key="k.id" :value="k.id">{{ k.name }}</option>
-        </select>
+      <div class="form-grid">
+        <label class="field"><span>归入知识库</span>
+          <select class="input" v-model="fromLogForm.kb_id" @change="onFromLogKbChange">
+            <option v-for="k in kbs" :key="k.id" :value="k.id">{{ k.name }}</option>
+          </select>
+        </label>
+        <label class="field"><span>分类</span>
+          <select class="input" v-model="fromLogForm.category_id">
+            <option :value="null">（未分类）</option>
+            <template v-for="c in catsOf(fromLogForm.kb_id)" :key="c.id">
+              <option :value="c.id">{{ c.name }}</option>
+              <option v-for="child in c.children" :key="child.id" :value="child.id">{{ c.name }} ▸ {{ child.name }}</option>
+            </template>
+          </select>
+        </label>
+      </div>
+      <label class="field"><span>标签（可多选）</span>
+        <div class="tag-select">
+          <label v-for="t in tags" :key="t.id" class="tag-check" :class="{on: fromLogForm.tag_ids.includes(t.id)}">
+            <input type="checkbox" :value="t.id" v-model="fromLogForm.tag_ids"> {{ t.name }}
+          </label>
+        </div>
       </label>
       <label class="field"><span>答案 *</span><textarea class="input" rows="6" v-model="fromLogForm.answer"></textarea></label>
       <label class="field"><span>变体问法（换行分隔）</span><textarea class="input" rows="2" v-model="fromLogForm.question_aliases"></textarea></label>
@@ -442,13 +596,17 @@ createApp({
       kbs: [], kbId: null,
       question: '', matching: false, matchErr: '', matchResult: null, feedbackDone: {},
       topK: '', matchSteps: [],
-      settingsModal: false, settingsForm: {}, settingsSaving: false,
+      settingsSaving: false, settingsSaved: false, settingsForm: {},
       intents: [],
+      categories: [], expandedCats: {}, filterCategoryId: 'all', catsByKb: {},
+      tags: [], filterTagId: 'all',
       qas: [], keyword: '',
       overview: {}, hot: [], unmatched: [],
       kbModal: false, kbEditId: null, kbForm: { name: '', description: '', is_default: false },
       intentModal: false,
       intentForm: { id: null, name: '', description: '', sort_order: 0, kb_ids: [] },
+      catModal: false, catForm: { id: null, kb_id: null, parent_id: null, name: '' },
+      tagModal: false, tagForm: { id: null, name: '' },
       qaModal: false, qaForm: {},
       importModal: false, importText: '', importPreview: null, importResult: null, importing: false,
       fromLogModal: false, fromLogForm: {},
@@ -456,6 +614,23 @@ createApp({
   },
   computed: {
     currentKb() { return this.kbs.find(k => k.id === this.kbId); },
+    catTotalCount() {
+      return this.categories.reduce((s, c) => s + c.qa_count + (c.children || []).reduce((x, y) => x + y.qa_count, 0), 0);
+    },
+    qaFilterDesc() {
+      const parts = [this.currentKb?.name || ''];
+      if (this.filterCategoryId !== 'all') {
+        const c = this.findCategory(this.filterCategoryId);
+        if (c) parts.push(c.parentName ? `${c.parentName} ▸ ${c.name}` : c.name);
+      }
+      if (this.filterTagId !== 'all') {
+        const t = this.tags.find(t => t.id === this.filterTagId);
+        if (t) parts.push(`#${t.name}`);
+      }
+      if (this.keyword) parts.push(`"${this.keyword}"`);
+      return parts.filter(Boolean).join(' · ');
+    },
+    qaFormCats() { return this.catsOf(this.qaForm.kb_id); },
     traceText() {
       const t = this.matchResult?.trace;
       return t ? JSON.stringify(t, null, 2) : '';
@@ -510,6 +685,9 @@ createApp({
     async initData() {
       await this.loadKbs();
       await this.loadIntents();
+      await this.loadSettings();
+      await this.loadCategories();
+      await this.loadTags();
     },
     async loadKbs() {
       this.kbs = await this.api('GET', '/api/kbs');
@@ -520,6 +698,9 @@ createApp({
     onKbSwitch() {
       localStorage.setItem('kbId', this.kbId);
       this.qas = [];
+      this.filterCategoryId = 'all';
+      this.filterTagId = 'all';
+      this.loadCategories();
       if (this.page === 'manage') this.loadQas();
     },
     async loadIntents() {
@@ -528,6 +709,37 @@ createApp({
         it.kbNames = (it.kb_ids || []).map(id => this.kbs.find(k => k.id === id)?.name || ('库#' + id));
       });
       this.intents = list;
+    },
+    async loadCategories() {
+      if (!this.kbId) return;
+      this.categories = await this.api('GET', '/api/categories?kb_id=' + this.kbId);
+      this.categories.forEach(c => {
+        if (this.expandedCats[c.id] === undefined) this.expandedCats[c.id] = true;
+        c.children.forEach(ch => { ch.parentName = c.name; });
+      });
+    },
+    toggleCat(id) { this.expandedCats[id] = !this.expandedCats[id]; },
+    findCategory(id) {
+      for (const c of this.categories) {
+        if (c.id === id) return c;
+        const ch = (c.children || []).find(x => x.id === id);
+        if (ch) return ch;
+      }
+      return null;
+    },
+    async loadCatsFor(kbId) {
+      // 分类按库缓存（QA 表单/转正抽屉切换库时用）
+      if (!kbId || this.catsByKb[kbId]) return;
+      if (kbId === this.kbId) { this.catsByKb[kbId] = this.categories; return; }
+      try { this.catsByKb[kbId] = await this.api('GET', '/api/categories?kb_id=' + kbId); }
+      catch (e) { this.catsByKb[kbId] = []; }
+    },
+    catsOf(kbId) {
+      if (kbId === this.kbId) return this.categories;
+      return this.catsByKb[kbId] || [];
+    },
+    async loadTags() {
+      this.tags = await this.api('GET', '/api/tags');
     },
     async doMatch() {
       this.matching = true; this.matchErr = ''; this.matchResult = null; this.feedbackDone = {}; this.matchSteps = [];
@@ -603,30 +815,38 @@ createApp({
         this.matchSteps.push({ stage: evt.stage, label, engine: 'keyword', engineLabel, ms: d.ms, text });
       }
     },
-    async openSettings() {
-      try {
-        this.settingsForm = await this.api('GET', '/api/settings');
-        this.settingsModal = true;
-      } catch (e) { alert(e.message); }
+    async loadSettings() {
+      try { this.settingsForm = JSON.parse(JSON.stringify(await this.api('GET', '/api/settings'))); } catch (e) { /* 忽略 */ }
     },
     async saveSettings() {
-      this.settingsSaving = true;
+      this.settingsSaving = true; this.settingsSaved = false;
       try {
         await this.api('PUT', '/api/settings', { values: this.settingsForm });
-        this.settingsModal = false;
+        this.settingsSaved = true;
+        setTimeout(() => { this.settingsSaved = false; }, 2000);
       } catch (e) { alert(e.message); } finally { this.settingsSaving = false; }
     },
     async sendFeedback(fb) {
       await this.api('POST', `/api/log/${this.matchResult.log_id}/feedback`, { feedback: fb });
       this.matchResult.matched.forEach(c => this.feedbackDone[c.qa_id] = true);
     },
-    goManage() { this.page = 'manage'; this.loadIntents(); this.loadQas(); },
+    goManage() { this.page = 'manage'; this.loadCategories(); this.loadTags(); this.loadQas(); },
     goStats() { this.page = 'stats'; this.loadStats(); },
+    async goSettings() {
+      this.page = 'settings';
+      await Promise.all([this.loadIntents(), this.loadSettings(), this.loadKbs(), this.loadTags(), this.loadCategories()]);
+    },
     async loadQas() {
       if (!this.kbId) return;
       let url = `/api/qas?kb_id=${this.kbId}`;
+      if (this.filterCategoryId !== 'all') url += `&category_id=${this.filterCategoryId}`;
+      if (this.filterTagId !== 'all') url += `&tag_id=${this.filterTagId}`;
       if (this.keyword) url += `&q=${encodeURIComponent(this.keyword)}`;
       this.qas = await this.api('GET', url);
+    },
+    resetFilter() {
+      this.keyword = ''; this.filterCategoryId = 'all'; this.filterTagId = 'all';
+      this.loadQas();
     },
     async loadStats() {
       const [ov, hot, um] = await Promise.all([
@@ -637,6 +857,13 @@ createApp({
       this.overview = ov; this.hot = hot; this.unmatched = um;
     },
     openKbNew() { this.kbEditId = null; this.kbForm = { name: '', description: '', is_default: false }; this.kbModal = true; },
+    openKbEdit(k) { this.kbEditId = k.id; this.kbForm = { name: k.name, description: k.description || '', is_default: !!k.is_default }; this.kbModal = true; },
+    async delKb(k) {
+      if (confirm(`删除知识库「${k.name}」及其全部 ${k.qa_count} 题？不可恢复！`)) {
+        try { await this.api('DELETE', `/api/kbs/${k.id}`); await this.loadKbs(); this.kbId = this.kbs[0]?.id; }
+        catch (e) { alert(e.message); }
+      }
+    },
     async saveKb() {
       try {
         if (this.kbEditId) await this.api('PUT', `/api/kbs/${this.kbEditId}`, this.kbForm);
@@ -650,6 +877,7 @@ createApp({
 > RAG、LLM、向量库等技术问题
 
 ## 1、如何优化 RAG 召回不准的问题
+- 标签: 高频题, RAG
 - 别名: rag检索效果差怎么办
 - 别名: 召回率低如何提升
 - 答案: 先诊断再优化：混合检索（向量+BM25）、优化切块与 overlap、加 rerank 精排、查询改写
@@ -660,11 +888,13 @@ createApp({
 正文补充也可以写在这里，会自动追加到答案。
 
 ## 2、向量数据库如何选型
+- 标签: 选型
 - 答案: 看数据规模、运维成本、生态兼容性
 
 # 个人背景
 
 ## 请做一个自我介绍
+- 标签: 高频题
 - 答案: 背景 + 项目亮点 + 与岗位的匹配点，控制在一分钟`;
       this.importPreview = null; this.importResult = null;
     },
@@ -687,7 +917,8 @@ createApp({
       try {
         this.importResult = await this.api('POST', '/api/qas/import-markdown', { kb_id: this.kbId, markdown: this.importText });
         this.importPreview = null;
-        await this.loadIntents();
+        await this.loadCategories();
+        await this.loadTags();
         if (this.page === 'manage') await this.loadQas();
       } catch (e) { alert(e.message); } finally { this.importing = false; }
     },
@@ -712,29 +943,101 @@ createApp({
         await this.api('DELETE', `/api/intents/${it.id}`); this.loadIntents();
       }
     },
+    // ---- 分类 ----
+    openCatEdit(cat, parent) {
+      this.catForm = cat
+        ? { id: cat.id, kb_id: this.kbId, parent_id: cat.parent_id, name: cat.name }
+        : { id: null, kb_id: this.kbId, parent_id: parent ? parent.id : null, name: '' };
+      this.catModal = true;
+    },
+    async saveCat() {
+      try {
+        const body = { kb_id: this.catForm.kb_id, parent_id: this.catForm.parent_id, name: this.catForm.name };
+        if (this.catForm.id) await this.api('PUT', `/api/categories/${this.catForm.id}`, body);
+        else await this.api('POST', '/api/categories', body);
+        this.catModal = false;
+        await this.loadCategories();
+        this.loadQas();
+      } catch (e) { alert(e.message); }
+    },
+    async delCat(cat) {
+      const msg = cat.parent_id
+        ? `删除子分类「${cat.name}」？其下 ${cat.qa_count} 题 QA 保留（分类置空）。`
+        : `删除一级分类「${cat.name}」及其 ${(cat.children||[]).length} 个子分类？QA 全部保留（分类置空）。`;
+      if (confirm(msg)) {
+        await this.api('DELETE', `/api/categories/${cat.id}`);
+        if (this.filterCategoryId === cat.id) this.filterCategoryId = 'all';
+        await this.loadCategories();
+        this.loadQas();
+      }
+    },
+    // ---- 标签 ----
+    openTagEdit(tag) {
+      this.tagForm = tag ? { id: tag.id, name: tag.name } : { id: null, name: '' };
+      this.tagModal = true;
+    },
+    async saveTag() {
+      try {
+        if (this.tagForm.id) await this.api('PUT', `/api/tags/${this.tagForm.id}`, { name: this.tagForm.name });
+        else await this.api('POST', '/api/tags', { name: this.tagForm.name });
+        this.tagModal = false;
+        await this.loadTags();
+        this.loadQas();
+      } catch (e) { alert(e.message); }
+    },
+    async delTag(tag) {
+      if (confirm(`删除标签「${tag.name}」？（只解除关联，QA 保留）`)) {
+        await this.api('DELETE', `/api/tags/${tag.id}`);
+        if (this.filterTagId === tag.id) this.filterTagId = 'all';
+        await this.loadTags();
+        this.loadQas();
+      }
+    },
     openQaEdit(qa) {
-      this.qaForm = qa ? { ...qa } : { kb_id: this.kbId, question: '', question_aliases: '', answer: '', follow_ups: '', star_hint: '', status: 'active', quality: 3 };
+      this.qaForm = qa
+        ? { ...qa, tag_ids: (qa.tags || []).map(t => t.id) }
+        : { kb_id: this.kbId, category_id: null, tag_ids: [], question: '', question_aliases: '', answer: '', follow_ups: '', star_hint: '', status: 'active', quality: 3 };
       this.qaModal = true;
+      this.loadCatsFor(this.qaForm.kb_id);
+    },
+    async onQaFormKbChange() {
+      await this.loadCatsFor(this.qaForm.kb_id);
+      const cats = this.catsOf(this.qaForm.kb_id);
+      const valid = !this.qaForm.category_id || this.findInCategories(cats, this.qaForm.category_id);
+      if (!valid) this.qaForm.category_id = null;
+    },
+    findInCategories(cats, id) {
+      for (const c of cats) {
+        if (c.id === id) return true;
+        if ((c.children || []).some(x => x.id === id)) return true;
+      }
+      return false;
     },
     async saveQa() {
       try {
-        const body = { kb_id: this.qaForm.kb_id, question: this.qaForm.question, question_aliases: this.qaForm.question_aliases, answer: this.qaForm.answer, follow_ups: this.qaForm.follow_ups, star_hint: this.qaForm.star_hint, status: this.qaForm.status, quality: this.qaForm.quality };
+        const body = { kb_id: this.qaForm.kb_id, category_id: this.qaForm.category_id, tag_ids: this.qaForm.tag_ids || [], question: this.qaForm.question, question_aliases: this.qaForm.question_aliases, answer: this.qaForm.answer, follow_ups: this.qaForm.follow_ups, star_hint: this.qaForm.star_hint, status: this.qaForm.status, quality: this.qaForm.quality };
         if (this.qaForm.id) await this.api('PUT', `/api/qas/${this.qaForm.id}`, body);
         else await this.api('POST', '/api/qas', body);
-        this.qaModal = false; this.loadQas(); this.loadIntents();
+        this.qaModal = false; this.loadQas(); this.loadCategories(); this.loadTags();
       } catch (e) { alert(e.message); }
     },
-    async delQa(qa) { if (confirm(`删除 QA「${qa.question}」？`)) { await this.api('DELETE', `/api/qas/${qa.id}`); this.loadQas(); this.loadIntents(); } },
+    async delQa(qa) { if (confirm(`删除 QA「${qa.question}」？`)) { await this.api('DELETE', `/api/qas/${qa.id}`); this.loadQas(); this.loadCategories(); this.loadTags(); } },
     openFromLog(u) {
-      this.fromLogForm = { log_id: u.id, question: u.question, kb_id: this.kbId, answer: '', question_aliases: '', _original: u.question };
+      this.fromLogForm = { log_id: u.id, question: u.question, kb_id: this.kbId, category_id: null, tag_ids: [], answer: '', question_aliases: '', _original: u.question };
       this.fromLogModal = true;
+    },    async onFromLogKbChange() {
+      await this.loadCatsFor(this.fromLogForm.kb_id);
+      const cats = this.catsOf(this.fromLogForm.kb_id);
+      const valid = !this.fromLogForm.category_id || this.findInCategories(cats, this.fromLogForm.category_id);
+      if (!valid) this.fromLogForm.category_id = null;
     },
     async saveFromLog() {
       try {
         await this.api('POST', `/api/qas/from_log/${this.fromLogForm.log_id}`, {
-          kb_id: this.fromLogForm.kb_id, question: this.fromLogForm.question, answer: this.fromLogForm.answer, question_aliases: this.fromLogForm.question_aliases,
+          kb_id: this.fromLogForm.kb_id, category_id: this.fromLogForm.category_id, tag_ids: this.fromLogForm.tag_ids,
+          question: this.fromLogForm.question, answer: this.fromLogForm.answer, question_aliases: this.fromLogForm.question_aliases,
         });
-        this.fromLogModal = false; this.loadStats(); this.loadIntents();
+        this.fromLogModal = false; this.loadStats(); this.loadCategories(); this.loadTags();
       } catch (e) { alert(e.message); }
     },
   },
