@@ -74,8 +74,7 @@ def list_kbs():
     for r in rows:
         kb = dict(r)
         kb["qa_count"] = db.get_conn().execute(
-            "SELECT COUNT(*) AS c FROM qa JOIN intent_l2 l2 ON qa.l2_id=l2.id JOIN intent_l1 l1 ON l2.l1_id=l1.id WHERE l1.kb_id=?",
-            (kb["id"],),
+            "SELECT COUNT(*) AS c FROM qa WHERE kb_id=? AND status='active'", (kb["id"],),
         ).fetchone()["c"]
         out.append(kb)
     return out
@@ -121,118 +120,82 @@ def delete_kb(kb_id: int):
     return {"ok": True}
 
 
-# ---------- 意图树 ----------
-class L1In(BaseModel):
-    kb_id: int
+# ---------- 意图（全局扁平列表，多对多挂载知识库） ----------
+class IntentIn(BaseModel):
     name: str
     description: str = ""
     sort_order: int = 0
+    kb_ids: list[int] = []
 
 
-class L2In(BaseModel):
-    l1_id: int
-    name: str
-    description: str = ""
-    sort_order: int = 0
-
-
-def _kb_of_l1(l1_id: int) -> int:
-    row = db.get_conn().execute("SELECT kb_id FROM intent_l1 WHERE id=?", (l1_id,)).fetchone()
+def _intent_row(intent_id: int) -> dict:
+    row = db.get_conn().execute("SELECT * FROM intent WHERE id=?", (intent_id,)).fetchone()
     if not row:
-        raise HTTPException(404, "一级意图不存在")
-    return row["kb_id"]
+        raise HTTPException(404, "意图不存在")
+    return dict(row)
+
+
+def _attach_kb_ids(conn, intent: dict) -> dict:
+    intent["kb_ids"] = [r["kb_id"] for r in conn.execute(
+        "SELECT kb_id FROM intent_kb WHERE intent_id=? ORDER BY kb_id", (intent["id"],)).fetchall()]
+    return intent
 
 
 @app.get("/api/intents", dependencies=[Depends(auth_dep)])
-def get_intents(kb_id: int):
+def get_intents():
     conn = db.get_conn()
-    l1s = [dict(r) for r in conn.execute(
-        "SELECT * FROM intent_l1 WHERE kb_id=? ORDER BY sort_order, id", (kb_id,)).fetchall()]
-    l2s = [dict(r) for r in conn.execute(
-        "SELECT l2.* FROM intent_l2 l2 JOIN intent_l1 l1 ON l2.l1_id=l1.id WHERE l1.kb_id=? ORDER BY l2.sort_order, l2.id",
-        (kb_id,)).fetchall()]
-    l2_by_l1: dict[int, list] = {}
-    for l2 in l2s:
-        qa_count = conn.execute("SELECT COUNT(*) AS c FROM qa WHERE l2_id=?", (l2["id"],)).fetchone()["c"]
-        l2["qa_count"] = qa_count
-        l2_by_l1.setdefault(l2["l1_id"], []).append(l2)
-    for l1 in l1s:
-        l1["children"] = l2_by_l1.get(l1["id"], [])
-    return l1s
+    intents = [_attach_kb_ids(conn, dict(r)) for r in
+               conn.execute("SELECT * FROM intent ORDER BY sort_order, id").fetchall()]
+    for it in intents:
+        if it["kb_ids"]:
+            marks = ",".join("?" * len(it["kb_ids"]))
+            it["qa_count"] = conn.execute(
+                f"SELECT COUNT(*) AS c FROM qa WHERE kb_id IN ({marks}) AND status='active'",
+                it["kb_ids"]).fetchone()["c"]
+        else:
+            it["qa_count"] = 0
+    return intents
 
 
-@app.post("/api/intents/l1", dependencies=[Depends(auth_dep)])
-def create_l1(body: L1In):
-    try:
-        with db.tx() as conn:
-            cur = conn.execute(
-                "INSERT INTO intent_l1(kb_id, name, description, sort_order) VALUES(?,?,?,?)",
-                (body.kb_id, body.name.strip(), body.description.strip(), body.sort_order),
-            )
-            return {"id": cur.lastrowid}
-    except Exception:
-        raise HTTPException(400, "创建失败：同级可能已存在同名大类")
-
-
-@app.put("/api/intents/l1/{l1_id}", dependencies=[Depends(auth_dep)])
-def update_l1(l1_id: int, body: L1In):
+@app.post("/api/intents", dependencies=[Depends(auth_dep)])
+def create_intent(body: IntentIn):
     with db.tx() as conn:
         cur = conn.execute(
-            "UPDATE intent_l1 SET kb_id=?, name=?, description=?, sort_order=? WHERE id=?",
-            (body.kb_id, body.name.strip(), body.description.strip(), body.sort_order, l1_id),
-        )
-        if cur.rowcount == 0:
-            raise HTTPException(404, "一级意图不存在")
+            "INSERT INTO intent(name, description, sort_order) VALUES(?,?,?)",
+            (body.name.strip(), body.description.strip(), body.sort_order))
+        intent_id = cur.lastrowid
+        for kb_id in body.kb_ids:
+            conn.execute("INSERT OR IGNORE INTO intent_kb(intent_id, kb_id) VALUES(?,?)",
+                         (intent_id, kb_id))
+    return {"id": intent_id}
+
+
+@app.put("/api/intents/{intent_id}", dependencies=[Depends(auth_dep)])
+def update_intent(intent_id: int, body: IntentIn):
+    _intent_row(intent_id)
+    with db.tx() as conn:
+        conn.execute(
+            "UPDATE intent SET name=?, description=?, sort_order=? WHERE id=?",
+            (body.name.strip(), body.description.strip(), body.sort_order, intent_id))
+        conn.execute("DELETE FROM intent_kb WHERE intent_id=?", (intent_id,))
+        for kb_id in body.kb_ids:
+            conn.execute("INSERT OR IGNORE INTO intent_kb(intent_id, kb_id) VALUES(?,?)",
+                         (intent_id, kb_id))
     return {"ok": True}
 
 
-@app.delete("/api/intents/l1/{l1_id}", dependencies=[Depends(auth_dep)])
-def delete_l1(l1_id: int):
+@app.delete("/api/intents/{intent_id}", dependencies=[Depends(auth_dep)])
+def delete_intent(intent_id: int):
     with db.tx() as conn:
-        cur = conn.execute("DELETE FROM intent_l1 WHERE id=?", (l1_id,))
+        cur = conn.execute("DELETE FROM intent WHERE id=?", (intent_id,))
         if cur.rowcount == 0:
-            raise HTTPException(404, "一级意图不存在")
-    return {"ok": True}
-
-
-@app.post("/api/intents/l2", dependencies=[Depends(auth_dep)])
-def create_l2(body: L2In):
-    _kb_of_l1(body.l1_id)
-    try:
-        with db.tx() as conn:
-            cur = conn.execute(
-                "INSERT INTO intent_l2(l1_id, name, description, sort_order) VALUES(?,?,?,?)",
-                (body.l1_id, body.name.strip(), body.description.strip(), body.sort_order),
-            )
-            return {"id": cur.lastrowid}
-    except Exception:
-        raise HTTPException(400, "创建失败：同大类下可能已存在同名子意图")
-
-
-@app.put("/api/intents/l2/{l2_id}", dependencies=[Depends(auth_dep)])
-def update_l2(l2_id: int, body: L2In):
-    with db.tx() as conn:
-        cur = conn.execute(
-            "UPDATE intent_l2 SET l1_id=?, name=?, description=?, sort_order=? WHERE id=?",
-            (body.l1_id, body.name.strip(), body.description.strip(), body.sort_order, l2_id),
-        )
-        if cur.rowcount == 0:
-            raise HTTPException(404, "二级意图不存在")
-    return {"ok": True}
-
-
-@app.delete("/api/intents/l2/{l2_id}", dependencies=[Depends(auth_dep)])
-def delete_l2(l2_id: int):
-    with db.tx() as conn:
-        cur = conn.execute("DELETE FROM intent_l2 WHERE id=?", (l2_id,))
-        if cur.rowcount == 0:
-            raise HTTPException(404, "二级意图不存在")
+            raise HTTPException(404, "意图不存在")
     return {"ok": True}
 
 
 # ---------- QA ----------
 class QAIn(BaseModel):
-    l2_id: int
+    kb_id: int
     question: str
     question_aliases: str = ""
     answer: str
@@ -243,18 +206,9 @@ class QAIn(BaseModel):
 
 
 @app.get("/api/qas", dependencies=[Depends(auth_dep)])
-def list_qas(kb_id: int, l1_id: int | None = None, l2_id: int | None = None, q: str = "", status: str = ""):
-    sql = (
-        "SELECT qa.*, l2.name AS l2_name, l2.l1_id, l1.name AS l1_name, l1.kb_id "
-        "FROM qa JOIN intent_l2 l2 ON qa.l2_id=l2.id JOIN intent_l1 l1 ON l2.l1_id=l1.id WHERE l1.kb_id=?"
-    )
+def list_qas(kb_id: int, q: str = "", status: str = ""):
+    sql = "SELECT qa.*, kb.name AS kb_name FROM qa JOIN kb ON qa.kb_id=kb.id WHERE qa.kb_id=?"
     args: list = [kb_id]
-    if l2_id:
-        sql += " AND qa.l2_id=?"
-        args.append(l2_id)
-    elif l1_id:
-        sql += " AND l2.l1_id=?"
-        args.append(l1_id)
     if q:
         sql += " AND (qa.question LIKE ? OR qa.question_aliases LIKE ? OR qa.answer LIKE ?)"
         like = f"%{q}%"
@@ -270,9 +224,9 @@ def list_qas(kb_id: int, l1_id: int | None = None, l2_id: int | None = None, q: 
 def create_qa(body: QAIn):
     with db.tx() as conn:
         cur = conn.execute(
-            "INSERT INTO qa(l2_id, question, question_aliases, answer, follow_ups, star_hint, status, quality) "
+            "INSERT INTO qa(kb_id, question, question_aliases, answer, follow_ups, star_hint, status, quality) "
             "VALUES(?,?,?,?,?,?,?,?)",
-            (body.l2_id, body.question.strip(), body.question_aliases.strip(), body.answer.strip(),
+            (body.kb_id, body.question.strip(), body.question_aliases.strip(), body.answer.strip(),
              body.follow_ups.strip(), body.star_hint.strip(), body.status, body.quality),
         )
         return {"id": cur.lastrowid}
@@ -282,9 +236,9 @@ def create_qa(body: QAIn):
 def update_qa(qa_id: int, body: QAIn):
     with db.tx() as conn:
         cur = conn.execute(
-            "UPDATE qa SET l2_id=?, question=?, question_aliases=?, answer=?, follow_ups=?, star_hint=?, "
+            "UPDATE qa SET kb_id=?, question=?, question_aliases=?, answer=?, follow_ups=?, star_hint=?, "
             "status=?, quality=?, updated_at=datetime('now','localtime') WHERE id=?",
-            (body.l2_id, body.question.strip(), body.question_aliases.strip(), body.answer.strip(),
+            (body.kb_id, body.question.strip(), body.question_aliases.strip(), body.answer.strip(),
              body.follow_ups.strip(), body.star_hint.strip(), body.status, body.quality, qa_id),
         )
         if cur.rowcount == 0:
@@ -413,9 +367,10 @@ def update_settings(body: SettingsIn):
 async def _run_match(body: MatchIn, emit) -> dict:
     """执行完整匹配；emit(stage, data) 用于流式上报进度，非流式传 no-op。
 
-    链路：Step0 全库关键词直配（≥直配线直接命中，省 LLM）
-          → 未命中 Step1 LLM 意图路由 → Step2 该 L2 内精配
-          →（为空时）全库关键词二次兜底 → 记日志。
+    链路：Step0 全部库关键词直配（≥直配线直接命中，省 LLM）
+          → 未命中 Step1 LLM 意图识别 → 意图挂载知识库合并池
+          → Step2 池内全量精配（一次 LLM 调用出 top-k）
+          →（未达标时）全部库关键词兜底 → 记日志。
     """
     t0 = time.perf_counter()
     question = body.question.strip()
@@ -432,21 +387,22 @@ async def _run_match(body: MatchIn, emit) -> dict:
                               "route_min_score": route_min, "keyword_match_min_score": kw_min,
                               "keyword_direct_score": direct_score}}
 
-    l1_rows = [dict(r) for r in conn.execute(
-        "SELECT * FROM intent_l1 WHERE kb_id=? ORDER BY sort_order, id", (body.kb_id,)).fetchall()]
-    l2_rows = [dict(r) for r in conn.execute(
-        "SELECT l2.* FROM intent_l2 l2 JOIN intent_l1 l1 ON l2.l1_id=l1.id WHERE l1.kb_id=?",
-        (body.kb_id,)).fetchall()]
-    if not l1_rows:
-        raise HTTPException(400, "该知识库还没有意图分类，请先创建")
-
-    # 全库 active QA 只查一次：Step0 直配扫描 + 二次兜底复用
+    # 全局资源只查一次：所有库 active QA + 全局意图（含挂载的库）
     all_qas = [dict(r) for r in conn.execute(
-        "SELECT qa.* FROM qa JOIN intent_l2 l2 ON qa.l2_id=l2.id "
-        "JOIN intent_l1 l1 ON l2.l1_id=l1.id WHERE l1.kb_id=? AND qa.status='active'",
-        (body.kb_id,)).fetchall()]
+        "SELECT qa.* FROM qa WHERE qa.status='active'").fetchall()]
+    intents = []
+    for r in conn.execute("SELECT * FROM intent ORDER BY sort_order, id").fetchall():
+        it = dict(r)
+        kb_rows = conn.execute(
+            "SELECT kb.id, kb.name FROM intent_kb ik JOIN kb ON ik.kb_id=kb.id WHERE ik.intent_id=?",
+            (r["id"],)).fetchall()
+        it["kb_ids"] = [k["id"] for k in kb_rows]
+        it["kb_names"] = [k["name"] for k in kb_rows]
+        intents.append(it)
+    if not intents:
+        raise HTTPException(400, "还没有任何意图，请先在题库管理页创建意图并挂载知识库")
 
-    # ---- Step 0 关键词直配（毫秒级；命中则省去两轮 LLM 调用）----
+    # ---- Step 0 关键词直配（扫描所有库，毫秒级；命中则省去两轮 LLM 调用）----
     route_res = None
     qas, matched, degraded = [], [], False
     tp = time.perf_counter()
@@ -459,51 +415,52 @@ async def _run_match(body: MatchIn, emit) -> dict:
         matched = [llm.MatchCandidate(c.qa_id, c.score, f"关键词直配（重合度 {c.score}）")
                    for c in direct]
     else:
-        # ---- Step 1 LLM 意图路由 ----
+        # ---- Step 1 LLM 意图识别（意图 → 挂载的知识库）----
         t1 = time.perf_counter()
-        route_res = await llm.route(question, l1_rows, l2_rows, route_min)
+        route_res = await llm.route(question, intents, route_min)
         trace["route"] = {**route_res.detail, "ms": round((time.perf_counter() - t1) * 1000)}
-        l1_name = next((r["name"] for r in l1_rows if r["id"] == route_res.l1_id), None)
-        l2_name = next((r["name"] for r in l2_rows if r["id"] == route_res.l2_id), None)
+        intent = next((it for it in intents if it["id"] == route_res.intent_id), None)
         await emit("route", {
-            "l1_id": route_res.l1_id, "l2_id": route_res.l2_id,
-            "l1_name": l1_name, "l2_name": l2_name,
+            "intent_id": route_res.intent_id,
+            "intent_name": intent["name"] if intent else None,
+            "kb_names": intent["kb_names"] if intent else [],
             "confidence": route_res.confidence, "reason": route_res.reason,
             "degraded": route_res.degraded, "ms": trace["route"]["ms"], **route_res.detail,
         })
 
-        # ---- Step 2 候选精配（该 L2 内）----
-        if route_res.l2_id:
-            qas = [dict(r) for r in conn.execute(
-                "SELECT * FROM qa WHERE l2_id=? AND status='active'", (route_res.l2_id,)).fetchall()]
-        if qas:
+        # ---- Step 2 全量精配（意图挂载的所有知识库 QA 合并池，一次 LLM 调用）----
+        pool = []
+        if intent and intent["kb_ids"]:
+            kb_set = set(intent["kb_ids"])
+            pool = [q for q in all_qas if q["kb_id"] in kb_set]
+        if pool:
             t2 = time.perf_counter()
-            m_res = await llm.match_candidates(question, qas, min_score=min_score, kw_min=kw_min, limit=top_k)
+            m_res = await llm.match_candidates(question, pool, min_score=min_score, kw_min=kw_min, limit=top_k)
             matched, degraded = m_res.candidates, m_res.degraded
             trace["match"] = {**m_res.detail, "ms": round((time.perf_counter() - t2) * 1000)}
             await emit("match", trace["match"])
             if not matched and config.KEYWORD_FALLBACK:
-                # 该 L2 下没匹配到（含低分被滤）→ 全库关键词再兜底（路由可能选错 L1）
+                # 意图池内没匹配到（含低分被滤）→ 全部库关键词兜底（意图可能识别错）
                 t3 = time.perf_counter()
                 global_matched, g_detail = llm.keyword_match_global(question, all_qas, kw_min)
-                trace["fallback"] = {**g_detail, "trigger": "L2 内无达标候选",
+                trace["fallback"] = {**g_detail, "trigger": "意图池内无达标候选",
                                      "ms": round((time.perf_counter() - t3) * 1000)}
                 await emit("fallback", trace["fallback"])
                 if global_matched:
                     qas, matched, degraded = all_qas, global_matched, True
         elif config.KEYWORD_FALLBACK:
-            # 路由未定位 L2 → 全库关键词兜底，尽量给候选而不是直接判"新问题"
+            # 意图未定位或挂载库为空 → 全部库关键词兜底，尽量给候选而不是直接判"新问题"
             t3 = time.perf_counter()
             if all_qas:
                 matched, g_detail = llm.keyword_match_global(question, all_qas, kw_min)
                 degraded = True
-                trace["fallback"] = {**g_detail, "trigger": "路由未定位子意图",
+                trace["fallback"] = {**g_detail, "trigger": "意图未定位",
                                      "ms": round((time.perf_counter() - t3) * 1000)}
                 await emit("fallback", trace["fallback"])
                 if matched:
                     qas = all_qas
             else:
-                trace["fallback"] = {"engine": "none", "trigger": "路由未定位子意图且库内无 QA"}
+                trace["fallback"] = {"engine": "none", "trigger": "意图未定位且库内无 QA"}
 
     # ---- 命中处理与日志 ----
     qa_details, hit_ids = [], []
@@ -527,25 +484,25 @@ async def _run_match(body: MatchIn, emit) -> dict:
     source = "match" if hit_ids else "new"
     with db.tx() as txn:
         cur = txn.execute(
-            "INSERT INTO query_log(kb_id, question, l1_id, l2_id, route_confidence, matched_qa_ids, source) "
-            "VALUES(?,?,?,?,?,?,?)",
+            "INSERT INTO query_log(kb_id, question, intent_id, route_confidence, matched_qa_ids, source) "
+            "VALUES(?,?,?,?,?,?)",
             (body.kb_id, question,
-             route_res.l1_id if route_res else None,
-             route_res.l2_id if route_res else None,
+             route_res.intent_id if route_res else None,
              route_res.confidence if route_res else (matched[0].score if matched else 0.0),
              json.dumps(hit_ids), source),
         )
         log_id = cur.lastrowid
 
     if route_res:
-        l1_name = next((r["name"] for r in l1_rows if r["id"] == route_res.l1_id), None)
-        l2_name = next((r["name"] for r in l2_rows if r["id"] == route_res.l2_id), None)
-        route_view = {"l1_id": route_res.l1_id, "l2_id": route_res.l2_id, "l1_name": l1_name,
-                      "l2_name": l2_name, "confidence": route_res.confidence,
+        intent = next((it for it in intents if it["id"] == route_res.intent_id), None)
+        route_view = {"intent_id": route_res.intent_id,
+                      "intent_name": intent["name"] if intent else None,
+                      "kb_names": intent["kb_names"] if intent else [],
+                      "confidence": route_res.confidence,
                       "reason": route_res.reason, "degraded": degraded}
     else:
         # 关键词直配命中：未走 LLM 路由
-        route_view = {"l1_id": None, "l2_id": None, "l1_name": "关键词直配", "l2_name": "全库扫描命中",
+        route_view = {"intent_id": None, "intent_name": "关键词直配", "kb_names": [],
                       "confidence": matched[0].score if matched else trace["prematch"].get("best_score", 0.0),
                       "reason": "关键词重合度达标，直接命中，未调用 LLM", "degraded": False}
 
@@ -624,8 +581,7 @@ def feedback(log_id: int, body: FeedbackIn):
 def stats_overview(kb_id: int):
     conn = db.get_conn()
     total = conn.execute(
-        "SELECT COUNT(*) AS c FROM qa JOIN intent_l2 l2 ON qa.l2_id=l2.id JOIN intent_l1 l1 ON l2.l1_id=l1.id "
-        "WHERE l1.kb_id=? AND qa.status='active'", (kb_id,)).fetchone()["c"]
+        "SELECT COUNT(*) AS c FROM qa WHERE kb_id=? AND status='active'", (kb_id,)).fetchone()["c"]
     logs = conn.execute("SELECT source FROM query_log WHERE kb_id=?", (kb_id,)).fetchall()
     hit = sum(1 for r in logs if r["source"] == "match")
     new = sum(1 for r in logs if r["source"] == "new")
@@ -645,10 +601,9 @@ def stats_overview(kb_id: int):
 def stats_hot(kb_id: int):
     conn = db.get_conn()
     rows = conn.execute(
-        "SELECT qa.id, qa.question, qa.hit_count, qa.quality, l2.name AS l2_name "
-        "FROM qa JOIN intent_l2 l2 ON qa.l2_id=l2.id JOIN intent_l1 l1 ON l2.l1_id=l1.id "
-        "WHERE l1.kb_id=? AND qa.status='active' AND qa.hit_count>0 "
-        "ORDER BY qa.hit_count DESC LIMIT 10", (kb_id,)).fetchall()
+        "SELECT id, question, hit_count, quality FROM qa "
+        "WHERE kb_id=? AND status='active' AND hit_count>0 "
+        "ORDER BY hit_count DESC LIMIT 10", (kb_id,)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -656,13 +611,13 @@ def stats_hot(kb_id: int):
 def stats_unmatched(kb_id: int):
     conn = db.get_conn()
     rows = conn.execute(
-        "SELECT id, question, l1_id, l2_id, created_at FROM query_log "
+        "SELECT id, question, intent_id, created_at FROM query_log "
         "WHERE kb_id=? AND source='new' ORDER BY created_at DESC LIMIT 200", (kb_id,)).fetchall()
     return [dict(r) for r in rows]
 
 
 class FromLogIn(BaseModel):
-    l2_id: int
+    kb_id: int
     answer: str
     question_aliases: str = ""
     follow_ups: str = ""
@@ -677,7 +632,7 @@ def qa_from_log(log_id: int, body: FromLogIn):
     if not log:
         raise HTTPException(404, "日志不存在")
     qa_in = QAIn(
-        l2_id=body.l2_id,
+        kb_id=body.kb_id,
         question=(body.question or log["question"]).strip(),
         question_aliases=body.question_aliases,
         answer=body.answer,
