@@ -393,10 +393,11 @@ class QAIn(BaseModel):
     question: str
     question_aliases: str = ""
     answer: str
-    follow_ups: str = ""
-    star_hint: str = ""
-    status: str = "active"
-    quality: int = 3
+    # 以下字段已从表单移除（保留列存历史数据；前端不传时 create 用默认值、update 不覆盖）
+    follow_ups: str | None = None
+    star_hint: str | None = None
+    status: str | None = None
+    quality: int | None = None
 
 
 def _save_qa_tags(conn, qa_id: int, tag_ids: list[int]):
@@ -457,7 +458,8 @@ def create_qa(body: QAIn):
             "INSERT INTO qa(kb_id, category_id, question, question_aliases, answer, follow_ups, star_hint, status, quality) "
             "VALUES(?,?,?,?,?,?,?,?,?)",
             (body.kb_id, body.category_id, body.question.strip(), body.question_aliases.strip(),
-             body.answer.strip(), body.follow_ups.strip(), body.star_hint.strip(), body.status, body.quality),
+             body.answer.strip(), body.follow_ups or "", body.star_hint or "",
+             body.status or "active", body.quality if body.quality is not None else 3),
         )
         qa_id = cur.lastrowid
         _save_qa_tags(conn, qa_id, body.tag_ids)
@@ -467,11 +469,12 @@ def create_qa(body: QAIn):
 @app.put("/api/qas/{qa_id}", dependencies=[Depends(auth_dep)])
 def update_qa(qa_id: int, body: QAIn):
     with db.tx() as conn:
+        # 表单移除的字段不再更新（保留库中原值）
         cur = conn.execute(
-            "UPDATE qa SET kb_id=?, category_id=?, question=?, question_aliases=?, answer=?, follow_ups=?, star_hint=?, "
-            "status=?, quality=?, updated_at=datetime('now','localtime') WHERE id=?",
-            (body.kb_id, body.category_id, body.question.strip(), body.question_aliases.strip(), body.answer.strip(),
-             body.follow_ups.strip(), body.star_hint.strip(), body.status, body.quality, qa_id),
+            "UPDATE qa SET kb_id=?, category_id=?, question=?, question_aliases=?, answer=?, "
+            "updated_at=datetime('now','localtime') WHERE id=?",
+            (body.kb_id, body.category_id, body.question.strip(), body.question_aliases.strip(),
+             body.answer.strip(), qa_id),
         )
         if cur.rowcount == 0:
             raise HTTPException(404, "QA 不存在")
@@ -853,8 +856,6 @@ class FromLogIn(BaseModel):
     kb_id: int
     answer: str
     question_aliases: str = ""
-    follow_ups: str = ""
-    star_hint: str = ""
     category_id: int | None = None
     tag_ids: list[int] = []
     question: str | None = None  # 不传则用日志原话
@@ -873,8 +874,6 @@ def qa_from_log(log_id: int, body: FromLogIn):
         question=(body.question or log["question"]).strip(),
         question_aliases=body.question_aliases,
         answer=body.answer,
-        follow_ups=body.follow_ups,
-        star_hint=body.star_hint,
     )
     result = create_qa(qa_in)
     with db.tx() as txn:
