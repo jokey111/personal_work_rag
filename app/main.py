@@ -193,9 +193,203 @@ def delete_intent(intent_id: int):
     return {"ok": True}
 
 
+# ---------- 分类（二级树，QA 元数据） ----------
+class CategoryIn(BaseModel):
+    kb_id: int
+    parent_id: int | None = None
+    name: str
+    sort_order: int = 0
+
+
+def _category_children(conn, parent_id: int | None) -> list[int]:
+    """收集 parent_id 及其全部后代 id（最多再一层）。"""
+    ids = [parent_id] if parent_id else []
+    if parent_id:
+        ids += [r["id"] for r in conn.execute(
+            "SELECT id FROM category WHERE parent_id=?", (parent_id,)).fetchall()]
+    return ids
+
+
+@app.get("/api/categories", dependencies=[Depends(auth_dep)])
+def list_categories(kb_id: int):
+    """返回二级分类树：[{...一级, children:[二级]}, ...]，带 qa_count。"""
+    conn = db.get_conn()
+    cats = [dict(r) for r in conn.execute(
+        "SELECT * FROM category WHERE kb_id=? ORDER BY sort_order, id", (kb_id,)).fetchall()]
+    by_parent: dict[int | None, list] = {}
+    for c in cats:
+        c["qa_count"] = conn.execute(
+            "SELECT COUNT(*) AS c FROM qa WHERE category_id=? AND status='active'", (c["id"],)
+        ).fetchone()["c"]
+        by_parent.setdefault(c["parent_id"], []).append(c)
+    for c in cats:
+        c["children"] = by_parent.get(c["id"], [])
+    return by_parent.get(None, [])
+
+
+def _dup_category_name(conn, kb_id: int, parent_id: int | None, name: str, exclude_id: int | None = None) -> bool:
+    sql = "SELECT 1 FROM category WHERE kb_id=? AND name=? AND parent_id IS ?"
+    args: list = [kb_id, name, parent_id]
+    if exclude_id:
+        sql += " AND id<>?"
+        args.append(exclude_id)
+    return conn.execute(sql + " LIMIT 1", args).fetchone() is not None
+
+
+@app.post("/api/categories", dependencies=[Depends(auth_dep)])
+def create_category(body: CategoryIn):
+    if body.parent_id is not None:
+        parent = db.get_conn().execute(
+            "SELECT * FROM category WHERE id=?", (body.parent_id,)).fetchone()
+        if not parent:
+            raise HTTPException(404, "父分类不存在")
+        if parent["parent_id"] is not None:
+            raise HTTPException(400, "分类最多两级，不能在二级分类下再建子分类")
+        if parent["kb_id"] != body.kb_id:
+            raise HTTPException(400, "父分类属于其他知识库")
+    if _dup_category_name(db.get_conn(), body.kb_id, body.parent_id, body.name.strip()):
+        raise HTTPException(400, "同级已存在同名分类")
+    try:
+        with db.tx() as conn:
+            cur = conn.execute(
+                "INSERT INTO category(kb_id, parent_id, name, sort_order) VALUES(?,?,?,?)",
+                (body.kb_id, body.parent_id, body.name.strip(), body.sort_order))
+            return {"id": cur.lastrowid}
+    except Exception:
+        raise HTTPException(400, "创建失败：同级可能已存在同名分类")
+
+
+@app.put("/api/categories/{cat_id}", dependencies=[Depends(auth_dep)])
+def update_category(cat_id: int, body: CategoryIn):
+    conn = db.get_conn()
+    row = conn.execute("SELECT * FROM category WHERE id=?", (cat_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "分类不存在")
+    if body.parent_id is not None:
+        if body.parent_id == cat_id:
+            raise HTTPException(400, "父分类不能是自己")
+        parent = conn.execute("SELECT * FROM category WHERE id=?", (body.parent_id,)).fetchone()
+        if not parent:
+            raise HTTPException(404, "父分类不存在")
+        if parent["parent_id"] is not None:
+            raise HTTPException(400, "分类最多两级")
+        if parent["kb_id"] != body.kb_id:
+            raise HTTPException(400, "父分类属于其他知识库")
+    # 二级降为一级时，其子分类一并上提为一级（挂到其 kb 下）
+    if row["parent_id"] is not None and body.parent_id is None:
+        with db.tx() as txn:
+            txn.execute("UPDATE category SET parent_id=NULL, kb_id=? WHERE parent_id=?",
+                        (row["kb_id"], cat_id))
+            txn.execute(
+                "UPDATE category SET kb_id=?, parent_id=?, name=?, sort_order=? WHERE id=?",
+                (body.kb_id, body.parent_id, body.name.strip(), body.sort_order, cat_id))
+        return {"ok": True}
+    if _dup_category_name(db.get_conn(), body.kb_id, body.parent_id, body.name.strip(), exclude_id=cat_id):
+        raise HTTPException(400, "同级已存在同名分类")
+    try:
+        with db.tx() as txn:
+            cur = txn.execute(
+                "UPDATE category SET kb_id=?, parent_id=?, name=?, sort_order=? WHERE id=?",
+                (body.kb_id, body.parent_id, body.name.strip(), body.sort_order, cat_id))
+            if cur.rowcount == 0:
+                raise HTTPException(404, "分类不存在")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(400, "更新失败：同级可能已存在同名分类")
+    return {"ok": True}
+
+
+@app.delete("/api/categories/{cat_id}", dependencies=[Depends(auth_dep)])
+def delete_category(cat_id: int):
+    """删除分类：子分类一并删除；其下 QA 的 category_id 置空（QA 本身保留）。"""
+    conn = db.get_conn()
+    row = conn.execute("SELECT * FROM category WHERE id=?", (cat_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "分类不存在")
+    with db.tx() as txn:
+        txn.execute("UPDATE qa SET category_id=NULL WHERE category_id IN "
+                    "(SELECT id FROM category WHERE parent_id=?)", (cat_id,))
+        txn.execute("UPDATE qa SET category_id=NULL WHERE category_id=?", (cat_id,))
+        txn.execute("DELETE FROM category WHERE parent_id=?", (cat_id,))
+        txn.execute("DELETE FROM category WHERE id=?", (cat_id,))
+    return {"ok": True}
+
+
+# ---------- 标签（扁平，QA 元数据，全局） ----------
+class TagIn(BaseModel):
+    name: str
+
+
+@app.get("/api/tags", dependencies=[Depends(auth_dep)])
+def list_tags(kb_id: int | None = None):
+    """标签列表（带使用次数）；kb_id 给定时只统计该库的使用数。"""
+    conn = db.get_conn()
+    if kb_id:
+        rows = conn.execute(
+            "SELECT t.id, t.name, COUNT(qt.qa_id) AS usage_count FROM tag t "
+            "LEFT JOIN qa_tag qt ON qt.tag_id=t.id "
+            "LEFT JOIN qa ON qa.id=qt.qa_id AND qa.kb_id=? "
+            "GROUP BY t.id HAVING (usage_count IS NOT NULL) OR COUNT(qt.qa_id)=0 "
+            "ORDER BY usage_count IS NULL, usage_count DESC, t.id", (kb_id,)).fetchall()
+        # 上面的写法容易把计数搞乱，改为简洁口径：usage = 该库内挂此标签的 QA 数
+        rows = conn.execute(
+            "SELECT t.id, t.name, "
+            "(SELECT COUNT(*) FROM qa_tag qt JOIN qa ON qa.id=qt.qa_id "
+            " WHERE qt.tag_id=t.id AND qa.kb_id=?) AS usage_count "
+            "FROM tag t ORDER BY usage_count DESC, t.id", (kb_id,)).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT t.id, t.name, COUNT(qt.qa_id) AS usage_count FROM tag t "
+            "LEFT JOIN qa_tag qt ON qt.tag_id=t.id "
+            "GROUP BY t.id ORDER BY usage_count DESC, t.id").fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.post("/api/tags", dependencies=[Depends(auth_dep)])
+def create_tag(body: TagIn):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "标签名不能为空")
+    row = db.get_conn().execute("SELECT id FROM tag WHERE name=?", (name,)).fetchone()
+    if row:
+        return {"id": row["id"], "existed": True}
+    with db.tx() as conn:
+        cur = conn.execute("INSERT INTO tag(name) VALUES(?)", (name,))
+        return {"id": cur.lastrowid}
+
+
+@app.put("/api/tags/{tag_id}", dependencies=[Depends(auth_dep)])
+def update_tag(tag_id: int, body: TagIn):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "标签名不能为空")
+    try:
+        with db.tx() as conn:
+            cur = conn.execute("UPDATE tag SET name=? WHERE id=?", (name, tag_id))
+            if cur.rowcount == 0:
+                raise HTTPException(404, "标签不存在")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(400, "更新失败：可能已存在同名标签")
+    return {"ok": True}
+
+
+@app.delete("/api/tags/{tag_id}", dependencies=[Depends(auth_dep)])
+def delete_tag(tag_id: int):
+    with db.tx() as conn:
+        cur = conn.execute("DELETE FROM tag WHERE id=?", (tag_id,))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "标签不存在")
+    return {"ok": True}
+
+
 # ---------- QA ----------
 class QAIn(BaseModel):
     kb_id: int
+    category_id: int | None = None
+    tag_ids: list[int] = []
     question: str
     question_aliases: str = ""
     answer: str
@@ -205,10 +399,42 @@ class QAIn(BaseModel):
     quality: int = 3
 
 
+def _save_qa_tags(conn, qa_id: int, tag_ids: list[int]):
+    conn.execute("DELETE FROM qa_tag WHERE qa_id=?", (qa_id,))
+    for tid in set(tag_ids):
+        conn.execute("INSERT OR IGNORE INTO qa_tag(qa_id, tag_id) VALUES(?,?)", (qa_id, tid))
+
+
+def _qa_tags(conn, qa_ids: list[int]) -> dict[int, list[dict]]:
+    if not qa_ids:
+        return {}
+    marks = ",".join("?" * len(qa_ids))
+    out: dict[int, list] = {}
+    for r in conn.execute(
+            f"SELECT qt.qa_id, t.id, t.name FROM qa_tag qt JOIN tag t ON qt.tag_id=t.id "
+            f"WHERE qt.qa_id IN ({marks}) ORDER BY t.name", qa_ids).fetchall():
+        out.setdefault(r["qa_id"], []).append({"id": r["id"], "name": r["name"]})
+    return out
+
+
 @app.get("/api/qas", dependencies=[Depends(auth_dep)])
-def list_qas(kb_id: int, q: str = "", status: str = ""):
-    sql = "SELECT qa.*, kb.name AS kb_name FROM qa JOIN kb ON qa.kb_id=kb.id WHERE qa.kb_id=?"
+def list_qas(kb_id: int, q: str = "", status: str = "",
+             category_id: int | None = None, tag_id: int | None = None):
+    """QA 列表：支持关键词 / 状态 / 分类（含子分类）/ 标签筛选，返回分类与标签。"""
+    sql = ("SELECT qa.*, kb.name AS kb_name, "
+           "CASE WHEN c1.parent_id IS NULL THEN c1.name ELSE c2.name END AS category_l1, "
+           "CASE WHEN c1.parent_id IS NULL THEN NULL ELSE c1.name END AS category_l2, "
+           "CASE WHEN c1.parent_id IS NULL THEN c1.id ELSE c2.id END AS top_category_id "
+           "FROM qa JOIN kb ON qa.kb_id=kb.id "
+           "LEFT JOIN category c1 ON qa.category_id=c1.id "
+           "LEFT JOIN category c2 ON c1.parent_id=c2.id WHERE qa.kb_id=?")
     args: list = [kb_id]
+    if category_id:
+        sql += " AND (qa.category_id=? OR qa.category_id IN (SELECT id FROM category WHERE parent_id=?))"
+        args += [category_id, category_id]
+    if tag_id:
+        sql += " AND qa.id IN (SELECT qa_id FROM qa_tag WHERE tag_id=?)"
+        args.append(tag_id)
     if q:
         sql += " AND (qa.question LIKE ? OR qa.question_aliases LIKE ? OR qa.answer LIKE ?)"
         like = f"%{q}%"
@@ -217,32 +443,39 @@ def list_qas(kb_id: int, q: str = "", status: str = ""):
         sql += " AND qa.status=?"
         args.append(status)
     sql += " ORDER BY qa.updated_at DESC LIMIT 500"
-    return [dict(r) for r in db.get_conn().execute(sql, args).fetchall()]
+    rows = [dict(r) for r in db.get_conn().execute(sql, args).fetchall()]
+    tags = _qa_tags(db.get_conn(), [r["id"] for r in rows])
+    for r in rows:
+        r["tags"] = tags.get(r["id"], [])
+    return rows
 
 
 @app.post("/api/qas", dependencies=[Depends(auth_dep)])
 def create_qa(body: QAIn):
     with db.tx() as conn:
         cur = conn.execute(
-            "INSERT INTO qa(kb_id, question, question_aliases, answer, follow_ups, star_hint, status, quality) "
-            "VALUES(?,?,?,?,?,?,?,?)",
-            (body.kb_id, body.question.strip(), body.question_aliases.strip(), body.answer.strip(),
-             body.follow_ups.strip(), body.star_hint.strip(), body.status, body.quality),
+            "INSERT INTO qa(kb_id, category_id, question, question_aliases, answer, follow_ups, star_hint, status, quality) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (body.kb_id, body.category_id, body.question.strip(), body.question_aliases.strip(),
+             body.answer.strip(), body.follow_ups.strip(), body.star_hint.strip(), body.status, body.quality),
         )
-        return {"id": cur.lastrowid}
+        qa_id = cur.lastrowid
+        _save_qa_tags(conn, qa_id, body.tag_ids)
+        return {"id": qa_id}
 
 
 @app.put("/api/qas/{qa_id}", dependencies=[Depends(auth_dep)])
 def update_qa(qa_id: int, body: QAIn):
     with db.tx() as conn:
         cur = conn.execute(
-            "UPDATE qa SET kb_id=?, question=?, question_aliases=?, answer=?, follow_ups=?, star_hint=?, "
+            "UPDATE qa SET kb_id=?, category_id=?, question=?, question_aliases=?, answer=?, follow_ups=?, star_hint=?, "
             "status=?, quality=?, updated_at=datetime('now','localtime') WHERE id=?",
-            (body.kb_id, body.question.strip(), body.question_aliases.strip(), body.answer.strip(),
+            (body.kb_id, body.category_id, body.question.strip(), body.question_aliases.strip(), body.answer.strip(),
              body.follow_ups.strip(), body.star_hint.strip(), body.status, body.quality, qa_id),
         )
         if cur.rowcount == 0:
             raise HTTPException(404, "QA 不存在")
+        _save_qa_tags(conn, qa_id, body.tag_ids)
     return {"ok": True}
 
 
@@ -622,6 +855,8 @@ class FromLogIn(BaseModel):
     question_aliases: str = ""
     follow_ups: str = ""
     star_hint: str = ""
+    category_id: int | None = None
+    tag_ids: list[int] = []
     question: str | None = None  # 不传则用日志原话
 
 
@@ -633,6 +868,8 @@ def qa_from_log(log_id: int, body: FromLogIn):
         raise HTTPException(404, "日志不存在")
     qa_in = QAIn(
         kb_id=body.kb_id,
+        category_id=body.category_id,
+        tag_ids=body.tag_ids,
         question=(body.question or log["question"]).strip(),
         question_aliases=body.question_aliases,
         answer=body.answer,
