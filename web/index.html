@@ -205,13 +205,13 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
           <b>路由</b>
           <span>{{ matchResult.route.intent_name || '未识别意图' }}</span>
           <span v-if="matchResult.route.kb_names?.length" style="font-size:12.5px;color:#4f46e5">→ 检索库：{{ matchResult.route.kb_names.join('、') }}</span>
-          <span>confidence {{ matchResult.route.confidence }}</span>
+          <span>confidence {{ (matchResult.route.confidence ?? 0).toFixed(2) }}</span>
           <span v-if="matchResult.route.degraded" class="degraded">关键词兜底（LLM 不可用）</span>
           <span style="color:#6370a3;font-size:12px">{{ matchResult.route.reason }}</span>
         </div>
 
         <div v-for="c in matchResult.matched" :key="c.qa_id" class="candidate">
-          <div class="head"><span class="q">{{ c.question }}</span><span class="score">score {{ c.score }}</span></div>
+          <div class="head"><span class="q">{{ c.question }}</span><span class="score">score {{ (c.score ?? 0).toFixed(2) }}</span></div>
           <div class="meta">被问 {{ c.hit_count }} 次 · {{ c.reason }}</div>
           <details>
             <summary>展开答案 / 追问 / STAR 要点</summary>

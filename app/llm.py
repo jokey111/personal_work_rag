@@ -107,14 +107,37 @@ def _extract_json(text: str) -> dict:
         raise LLMError(f"LLM 输出非 JSON: {text[:200]}") from e
 
 
+def _bigrams(text: str) -> set[str]:
+    """按空白分段后取相邻二元组（避免跨段拼接产生假连续片段）。"""
+    grams: set[str] = set()
+    for seg in text.split():
+        if len(seg) == 1:
+            grams.add(seg)
+        else:
+            grams.update(seg[i:i + 2] for i in range(len(seg) - 1))
+    return grams
+
+
+def _overlap_score(question: str, text: str) -> float:
+    """提问与候选文本的重合度：提问的相邻二元组在文本中连续出现的比例。
+
+    相比单字重合度，要求"怎么做"这类词组连续出现才算命中，
+    高频字堆出来的虚高分大幅减少，区分度更高。
+    """
+    qg = _bigrams(question)
+    if not qg:
+        return 0.0
+    hit = sum(1 for g in qg if g in text)
+    return round(hit / len(qg), 2)
+
+
 def _keyword_route(question: str, intents: list[dict],
                    min_score: float = 0.3) -> RouteResult:
-    """关键词兜底路由（LLM 不可用时）：问题与意图名称/描述的字符重合度打分。"""
+    """关键词兜底路由（LLM 不可用时）：问题与意图名称/描述的二元组重合度打分。"""
     best, best_score = None, 0.0
     for it in intents:
         text = f"{it['name']} {it['description'] or ''}"
-        hits = sum(1 for ch in set(question) if ch in text and not ch.isspace())
-        score = hits / max(len(set(question) - {" "}), 1)
+        score = _overlap_score(question, text)
         if score > best_score:
             best_score, best = score, it
     detail = {"engine": "keyword", "pool_size": len(intents),
@@ -127,13 +150,11 @@ def _keyword_route(question: str, intents: list[dict],
 
 def _keyword_match(question: str, qas: list[dict],
                    min_score: float = 0.5) -> tuple[list[MatchCandidate], dict]:
-    """关键词兜底精配：与 question+aliases 的字符重合度。返回 (候选, 过程明细)。"""
+    """关键词兜底精配：与 question+aliases 的二元组连续重合度。返回 (候选, 过程明细)。"""
     scored_all: list[tuple[int, float]] = []
-    q_chars = set(question) - {" "}
     for qa in qas:
         text = f"{qa['question']} {qa['question_aliases'] or ''}"
-        hits = sum(1 for ch in q_chars if ch in text)
-        scored_all.append((qa["id"], round(hits / max(len(q_chars), 1), 2)))
+        scored_all.append((qa["id"], _overlap_score(question, text)))
     kept = [MatchCandidate(i, s, "关键词兜底") for i, s in scored_all if s >= min_score]
     kept.sort(key=lambda c: -c.score)
     detail = {"engine": "keyword", "pool_size": len(qas), "threshold": min_score,
