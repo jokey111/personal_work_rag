@@ -86,6 +86,9 @@ html[data-font="yuan"]   { --font-base: "Yuanti SC", "YouYuan", 幼圆, "Varela 
 .nav button.page-btn.active, .nav button.page-btn:hover { background: var(--nav-item); color: #fff; }
 .nav .spacer { flex: 1; }
 .nav .kb-select, .nav .theme-select { background: var(--nav-select-bg); color: var(--nav-select-text); border: 1px solid var(--nav-border); border-radius: 8px; padding: 6px 10px; font-size: 13px; max-width: 180px; cursor: pointer; }
+.nav .kb-op { background: none; border: 1px solid var(--nav-border); color: var(--nav-text); border-radius: 8px; padding: 5px 10px; cursor: pointer; font-size: 13px; line-height: 1.4; transition: background .15s ease, color .15s ease; }
+.nav .kb-op:hover:not(:disabled) { background: var(--nav-item); color: #fff; }
+.nav .kb-op:disabled { opacity: .45; cursor: not-allowed; }
 .nav .theme-select { max-width: 118px; }
 /* 汉堡菜单（主题/字体/退出收纳） */
 .nav-menu { position: relative; margin-left: 6px; }
@@ -281,9 +284,13 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
     <button class="page-btn" :class="{active: page==='stats'}" @click="goStats">复盘统计</button>
     <button class="page-btn" :class="{active: page==='settings'}" @click="goSettings">⚙ 设置</button>
     <span class="spacer"></span>
-    <select v-if="page==='manage'" class="kb-select" v-model="kbId" @change="onKbSwitch">
-      <option v-for="k in kbs" :key="k.id" :value="k.id">{{ k.name }}（{{ k.qa_count }}题）</option>
-    </select>
+    <template v-if="page==='manage'">
+      <select class="kb-select" v-model="kbId" @change="onKbSwitch" title="切换题库">
+        <option v-for="k in kbs" :key="k.id" :value="k.id">{{ k.name }}（{{ k.qa_count }}题）</option>
+      </select>
+      <button class="kb-op" @click="openKbNew" title="新建题库">＋</button>
+      <button class="kb-op" @click="openKbEdit(currentKb)" :disabled="!currentKb" title="编辑 / 删除当前题库">✏️</button>
+    </template>
     <!-- 外观/账号菜单（汉堡） -->
     <div class="nav-menu">
       <button class="nav-burger" :class="{open: navMenuOpen}" @click="navMenuOpen=!navMenuOpen" title="主题 / 字体 / 退出">
@@ -504,25 +511,6 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
     <!-- 系统设置页 -->
     <div v-if="page==='settings'" class="settings-grid">
       <div class="card">
-        <div class="section-title"><h3>📚 知识库管理</h3><button class="btn sm" @click="openKbNew">＋知识库</button></div>
-        <table>
-          <thead><tr><th>名称</th><th>描述</th><th>题数</th><th>默认</th><th>操作</th></tr></thead>
-          <tbody>
-            <tr v-for="k in kbs" :key="k.id">
-              <td><b>{{ k.name }}</b></td>
-              <td style="font-size:12.5px;color:var(--text-2)">{{ k.description || '—' }}</td>
-              <td>{{ k.qa_count }}</td>
-              <td>{{ k.is_default ? '✅' : '' }}</td>
-              <td style="white-space:nowrap">
-                <button class="icon-btn" @click="openKbEdit(k)">✏️</button>
-                <button class="icon-btn" @click="delKb(k)">🗑</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="card">
         <div class="section-title"><h3>⚙ 匹配参数</h3><span v-if="settingsSaved" class="ok-tip">已保存</span></div>
         <p style="font-size:12px;color:var(--text-3);margin:0 0 12px 2px;line-height:1.6">
           保存后立即生效（存服务器数据库，无需重启）。阈值调高 → 更严格、宁可进新问题池；调低 → 更容易出候选。<br>
@@ -629,16 +617,20 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
     </div>
   </div><!-- /container -->
 
-  <!-- 新建知识库 -->
+  <!-- 新建 / 编辑知识库 -->
   <div v-if="kbModal" class="modal-mask" @click.self="kbModal=false">
     <div class="modal">
       <h3 style="margin-bottom:14px">{{ kbEditId ? '编辑知识库' : '新建知识库' }}</h3>
       <label class="field"><span>名称</span><input class="input" v-model="kbForm.name" placeholder="如：课程知识库"></label>
       <label class="field"><span>描述</span><input class="input" v-model="kbForm.description"></label>
       <label class="field"><span><input type="checkbox" v-model="kbForm.is_default"> 设为默认库</span></label>
-      <div style="display:flex;gap:10px;justify-content:flex-end">
-        <button class="btn ghost" @click="kbModal=false">取消</button>
-        <button class="btn" @click="saveKb">保存</button>
+      <div style="display:flex;gap:10px;justify-content:space-between;align-items:center;margin-top:6px">
+        <button v-if="kbEditId" class="nav-pop-logout" style="width:auto;padding:7px 12px" @click="delKbFromModal">🗑 删除此知识库</button>
+        <span v-else></span>
+        <div style="display:flex;gap:10px">
+          <button class="btn ghost" @click="kbModal=false">取消</button>
+          <button class="btn" @click="saveKb" :disabled="!kbForm.name.trim()">保存</button>
+        </div>
       </div>
     </div>
   </div>
@@ -1144,7 +1136,7 @@ createApp({
     goStats() { this.page = 'stats'; this.loadStats(); },
     async goSettings() {
       this.page = 'settings';
-      await Promise.all([this.loadSettings(), this.loadKbs(), this.loadTags(), this.loadCategories()]);
+      await Promise.all([this.loadSettings(), this.loadTags(), this.loadCategories()]);
       this.loadVectorStatus();
     },
     async loadVectorStatus() {
@@ -1184,15 +1176,29 @@ createApp({
     openKbEdit(k) { this.kbEditId = k.id; this.kbForm = { name: k.name, description: k.description || '', is_default: !!k.is_default }; this.kbModal = true; },
     async delKb(k) {
       if (await this.askConfirm(`删除知识库「${k.name}」及其全部 ${k.qa_count} 题？不可恢复！`)) {
-        try { await this.api('DELETE', `/api/kbs/${k.id}`); await this.loadKbs(); this.kbId = this.kbs[0]?.id; this.showToast('知识库已删除', 'success'); }
+        try {
+          this.kbModal = false;
+          await this.api('DELETE', `/api/kbs/${k.id}`);
+          await this.loadKbs();
+          this.kbId = this.kbs[0]?.id;
+          this.showToast('知识库已删除', 'success');
+        }
         catch (e) { this.showToast(e.message, 'error'); }
       }
     },
+    async delKbFromModal() {
+      const k = this.kbs.find(x => x.id === this.kbEditId);
+      if (k) await this.delKb(k);
+    },
     async saveKb() {
       try {
+        let newId = null;
         if (this.kbEditId) await this.api('PUT', `/api/kbs/${this.kbEditId}`, this.kbForm);
-        else await this.api('POST', '/api/kbs', this.kbForm);
-        this.kbModal = false; await this.loadKbs();
+        else { const r = await this.api('POST', '/api/kbs', this.kbForm); newId = r.id; }
+        this.kbModal = false;
+        await this.loadKbs();
+        if (newId) { this.kbId = newId; this.onKbSwitch(); this.showToast(`题库「${this.kbForm.name}」已创建`, 'success'); }
+        else this.showToast('知识库已保存', 'success');
       } catch (e) { this.showToast(e.message, 'error'); }
     },
     openImport() { this.importModal = true; this.importPreview = null; this.importResult = null; },
