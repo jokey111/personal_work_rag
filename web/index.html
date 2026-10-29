@@ -433,7 +433,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
         <div class="stat"><div class="num">{{ overview.qa_total }}</div><div class="lbl">题库总数</div></div>
         <div class="stat"><div class="num">{{ overview.query_total }}</div><div class="lbl">累计提问</div></div>
         <div class="stat"><div class="num" style="color:#16a34a">{{ overview.hit }}</div><div class="lbl">命中次数</div></div>
-        <div class="stat"><div class="num" style="color:#ea580c">{{ overview.new }}</div><div class="lbl">未命中（新问题）</div></div>
+        <div class="stat"><div class="num" style="color:#ea580c">{{ overview.new }}</div><div class="lbl">未命中</div></div>
         <div class="stat"><div class="num">{{ overview.hit_rate==null ? '—' : (overview.hit_rate*100).toFixed(0)+'%' }}</div><div class="lbl">命中率</div></div>
       </div>
       <div class="card bubble-chart">
@@ -457,13 +457,12 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
 
       <div class="card">
         <div class="section-title">
-          <h3>🕘 历史问题记录 <span style="font-size:12px;color:#94a3b8;font-weight:400">共 {{ records.length }} 条 · 未命中可转QA · 垃圾数据可删除</span></h3>
-          <input class="input" style="width:180px" placeholder="🔍 搜索问题" v-model="recordKeyword">
+          <h3>🕘 历史问题记录 <span style="font-size:12px;color:#94a3b8;font-weight:400">共 {{ records.length }} 条 · 垃圾数据可删除</span></h3>
         </div>
         <table>
           <thead><tr><th style="width:44%">问题</th><th>结果</th><th>时间</th><th>操作</th></tr></thead>
           <tbody>
-            <tr v-for="r in filteredRecords" :key="r.id">
+            <tr v-for="r in records" :key="r.id">
               <td style="max-width:380px">{{ r.question }}</td>
               <td style="white-space:nowrap;font-size:12.5px">
                 <span v-if="r.source==='match'" style="color:#16a34a" :title="r.matched_question || ''">✓ 命中</span>
@@ -473,7 +472,6 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
               </td>
               <td style="white-space:nowrap;color:#94a3b8;font-size:12.5px">{{ r.created_at }}</td>
               <td style="white-space:nowrap">
-                <button v-if="r.source==='new'" class="btn sm ghost" @click="recordToQa(r)">转QA</button>
                 <template v-if="confirmDelLog !== r.id">
                   <button class="icon-btn" title="彻底删除该记录" @click="confirmDelLog = r.id">🗑</button>
                 </template>
@@ -483,7 +481,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
                 </template>
               </td>
             </tr>
-            <tr v-if="!filteredRecords.length"><td colspan="4" style="color:#94a3b8;text-align:center;padding:20px">{{ recordKeyword ? '没有匹配的记录' : '还没有提问记录，去匹配页试一次' }}</td></tr>
+            <tr v-if="!records.length"><td colspan="4" style="color:#94a3b8;text-align:center;padding:20px">还没有提问记录，去匹配页试一次</td></tr>
           </tbody>
         </table>
       </div>
@@ -663,7 +661,7 @@ createApp({
       tagFlex: parseFloat(localStorage.getItem('tagFlex')) || 4,
       resizingRow: false,
       expandedQas: {},
-      overview: {}, topCategories: [], topTags: [], records: [], confirmDelLog: null, recordKeyword: '',
+      overview: {}, topCategories: [], topTags: [], records: [], confirmDelLog: null,
       kbModal: false, kbEditId: null, kbForm: { name: '', description: '', is_default: false },
       intentModal: false,
       intentForm: { id: null, name: '', description: '', sort_order: 0, kb_ids: [] },
@@ -695,12 +693,6 @@ createApp({
     traceText() {
       const t = this.matchResult?.trace;
       return t ? JSON.stringify(t, null, 2) : '';
-    },
-    filteredRecords() {
-      const kw = (this.recordKeyword || '').trim().toLowerCase();
-      if (!kw) return this.records;
-      return this.records.filter(r => (r.question || '').toLowerCase().includes(kw)
-        || (r.matched_question || '').toLowerCase().includes(kw));
     },
     noMatchReason() {
       const t = this.matchResult?.trace;
@@ -1208,24 +1200,9 @@ createApp({
       try {
         const body = { kb_id: this.qaForm.kb_id, category_id: this.qaForm.category_id, tag_ids: this.qaForm.tag_ids || [], question: this.qaForm.question, question_aliases: this.joinAliases(this.qaForm.aliasRows), answer: this.qaForm.answer };
         if (this.qaForm.id) await this.api('PUT', `/api/qas/${this.qaForm.id}`, body);
-        else if (this.qaForm._fromLog) {
-          await this.api('POST', `/api/qas/from_log/${this.qaForm._fromLog}`, body);
-          // 转正只改该记录自身状态为"已转QA"，不刷新统计指标（转正不算命中）
-          const rec = this.records.find(x => x.id === this.qaForm._fromLog);
-          if (rec) { rec.source = 'converted'; rec.matched_question = body.question; }
-        }
         else await this.api('POST', '/api/qas', body);
         this.qaModal = false; this.loadQas(); this.loadCategories(); this.loadTags();
       } catch (e) { alert(e.message); }
-    },
-    recordToQa(r) {
-      // 从历史记录转正：预填问题原话，分类默认左侧选中逻辑同新增
-      this.qaForm = { kb_id: this.kbId, tag_ids: [], question: r.question, aliasRows: [''], answer: '', _fromLog: r.id };
-      if (this.filterCategoryId !== 'all') this.qaForm.category_id = this.filterCategoryId;
-      else if (this.categories.length) this.qaForm.category_id = this.categories[0].id;
-      else this.qaForm.category_id = null;
-      this.qaModal = true;
-      this.loadCatsFor(this.qaForm.kb_id);
     },
     async delRecord(r) {
       try {
