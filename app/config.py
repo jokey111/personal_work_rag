@@ -28,6 +28,14 @@ LLM_API_KEY = _env("LLM_API_KEY", "")
 LLM_MODEL = _env("LLM_MODEL", "glm-4.7-flash")  # 免费档即可
 LLM_TIMEOUT_SECONDS = float(_env("LLM_TIMEOUT_SECONDS", "30"))
 
+# --- Embedding（向量检索，OpenAI 兼容 /embeddings，与 LLM 同 key） ---
+EMBEDDING_MODEL = _env("EMBEDDING_MODEL", "embedding-3")  # 智谱默认
+VECTOR_TOP_K = int(_env("VECTOR_TOP_K", "5"))             # 兜底检索取 top-k
+
+# 默认阈值（可在页面「匹配参数」中运行时调整，存 settings 表；此处为首次默认值）
+VECTOR_MATCH_SCORE = float(_env("VECTOR_MATCH_SCORE", "0.72"))   # 向量检索标准阈值
+VECTOR_FALLBACK_SCORE = float(_env("VECTOR_FALLBACK_SCORE", "0.55"))  # 兜底检索阈值
+
 # --- 兜底：LLM 不可用时走关键词匹配 ---
 KEYWORD_FALLBACK = _env("KEYWORD_FALLBACK", "1") == "1"
 # Step2 精配的最低命中分（低于此分的 LLM 候选视为"擦边"不返回，触发全库二次兜底）

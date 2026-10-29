@@ -38,6 +38,33 @@ MATCH_SYSTEM_PROMPT = (
 )
 
 
+VERIFY_SYSTEM_PROMPT = (
+    "你是知识库候选核验器。给定用户问题和若干候选QA（问题+答案），"
+    "判断每个候选是否能直接回答用户问题。\n"
+    "规则：\n"
+    "1. 语义相近、能直接回答该问题 → can_answer=true；只是同话题但答非所问 → false\n"
+    "2. 严格判断，宁可拒绝，不可硬凑\n"
+    "3. 只输出 JSON\n"
+    '输出格式：{"verified":[{"id":1,"can_answer":true,"score":0.9,"reason":"..."}]}'
+)
+
+FREE_ANSWER_SYSTEM_PROMPT = (
+    "你是知识库助手。用户的问题在知识库中没有找到可用的答案，请用你自身的知识回答。\n"
+    "规则：\n"
+    "1. 直接、简洁、有条理地回答问题本身\n"
+    "2. 如果问题涉及事实但你不确定，如实说明，不要编造\n"
+    "3. 用中文回答，使用 Markdown 格式"
+)
+
+GEN_ANSWER_SYSTEM_PROMPT = (
+    "你是知识库助手。基于给定的知识库QA内容回答用户问题。\n"
+    "规则：\n"
+    "1. 优先且忠实于知识库内容组织答案，不要添加知识库里没有的信息\n"
+    "2. 知识库内容与问题部分相关时，只回答相关部分\n"
+    "3. 用中文回答，使用 Markdown 格式，简洁有条理"
+)
+
+
 @dataclass
 class RouteResult:
     intent_id: int | None
@@ -166,6 +193,106 @@ def keyword_match_global(question: str, qas: list[dict],
                          min_score: float = 0.7) -> tuple[list[MatchCandidate], dict]:
     """路由失败或 L2 内无命中时的全库关键词兜底匹配。"""
     return _keyword_match(question, qas, min_score)
+
+
+@dataclass
+class VerifyItem:
+    qa_id: int
+    can_answer: bool
+    score: float
+    reason: str
+
+
+async def verify_candidates(question: str, qas: list[dict]) -> list[VerifyItem]:
+    """兜底核验：向量/关键词捞回的候选，让 LLM 判断能否直接回答用户问题。"""
+    if not qas:
+        return []
+    cands = [{"id": q["id"], "question": q["question"],
+              "answer": (q["answer"] or "")[:500]} for q in qas]
+    try:
+        data = await _chat_json(VERIFY_SYSTEM_PROMPT, json.dumps(
+            {"question": question, "candidates": cands}, ensure_ascii=False))
+    except LLMError:
+        raise
+    valid = {q["id"] for q in qas}
+    out: list[VerifyItem] = []
+    for item in data.get("verified", []):
+        try:
+            qa_id = int(item["id"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        if qa_id in valid:
+            out.append(VerifyItem(qa_id, bool(item.get("can_answer", False)),
+                                  float(item.get("score", 0) or 0),
+                                  str(item.get("reason", ""))))
+    out.sort(key=lambda v: -v.score)
+    return out
+
+
+async def free_answer(question: str, context_qas: list[dict] | None = None) -> str:
+    """宽松模式自答：无可用知识库答案时，用模型自身知识回答。
+
+    context_qas 非空时（兜底候选全部被核验拒绝），把候选作为参考上下文一并提供，
+    但明确告知模型这些候选不能直接回答，仅供参考话题方向。
+    """
+    if not config.LLM_API_KEY:
+        raise LLMError("LLM_API_KEY 未配置")
+    user_parts = [f"用户问题：{question}"]
+    if context_qas:
+        refs = "\n\n".join(
+            f"【参考候选（已判定无法直接回答该问题，仅提供话题背景）】\n问：{q['question']}\n答：{(q['answer'] or '')[:300]}"
+            for q in context_qas[:3])
+        user_parts.append(refs)
+    payload = {
+        "model": config.LLM_MODEL,
+        "messages": [
+            {"role": "system", "content": FREE_ANSWER_SYSTEM_PROMPT},
+            {"role": "user", "content": "\n\n".join(user_parts)},
+        ],
+        "temperature": 0.3,
+        "stream": False,
+    }
+    headers = {"Authorization": f"Bearer {config.LLM_API_KEY}"}
+    try:
+        async with httpx.AsyncClient(timeout=config.LLM_TIMEOUT_SECONDS) as client:
+            resp = await client.post(
+                f"{config.LLM_BASE_URL.rstrip('/')}/chat/completions",
+                json=payload, headers=headers)
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"].strip()
+    except httpx.HTTPStatusError as e:
+        raise LLMError(f"LLM HTTP {e.response.status_code}: {e.response.text[:200]}") from e
+    except (httpx.HTTPError, KeyError, IndexError) as e:
+        raise LLMError(f"LLM 调用失败: {e}") from e
+
+
+async def gen_answer(question: str, qa: dict) -> str:
+    """基于单条命中的 QA 生成自然语言回答（宽松模式下代替直接贴原文）。"""
+    if not config.LLM_API_KEY:
+        raise LLMError("LLM_API_KEY 未配置")
+    user = (f"用户问题：{question}\n\n知识库QA：\n问：{qa['question']}\n"
+            f"答：{qa['answer']}")
+    payload = {
+        "model": config.LLM_MODEL,
+        "messages": [
+            {"role": "system", "content": GEN_ANSWER_SYSTEM_PROMPT},
+            {"role": "user", "content": user},
+        ],
+        "temperature": 0.2,
+        "stream": False,
+    }
+    headers = {"Authorization": f"Bearer {config.LLM_API_KEY}"}
+    try:
+        async with httpx.AsyncClient(timeout=config.LLM_TIMEOUT_SECONDS) as client:
+            resp = await client.post(
+                f"{config.LLM_BASE_URL.rstrip('/')}/chat/completions",
+                json=payload, headers=headers)
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"].strip()
+    except httpx.HTTPStatusError as e:
+        raise LLMError(f"LLM HTTP {e.response.status_code}: {e.response.text[:200]}") from e
+    except (httpx.HTTPError, KeyError, IndexError) as e:
+        raise LLMError(f"LLM 调用失败: {e}") from e
 
 
 async def route(question: str, intents: list[dict],

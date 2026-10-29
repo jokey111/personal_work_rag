@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
-from . import config, db, llm, md_import
+from . import config, db, embedding, llm, md_import
 
 app = FastAPI(title="personal_work_rag", version="0.2.0")
 app.add_middleware(
@@ -463,7 +463,8 @@ def create_qa(body: QAIn):
         )
         qa_id = cur.lastrowid
         _save_qa_tags(conn, qa_id, body.tag_ids)
-        return {"id": qa_id}
+    _sync_qa_embedding(qa_id)
+    return {"id": qa_id}
 
 
 @app.put("/api/qas/{qa_id}", dependencies=[Depends(auth_dep)])
@@ -479,6 +480,7 @@ def update_qa(qa_id: int, body: QAIn):
         if cur.rowcount == 0:
             raise HTTPException(404, "QA 不存在")
         _save_qa_tags(conn, qa_id, body.tag_ids)
+    _sync_qa_embedding(qa_id)
     return {"ok": True}
 
 
@@ -488,7 +490,33 @@ def delete_qa(qa_id: int):
         cur = conn.execute("DELETE FROM qa WHERE id=?", (qa_id,))
         if cur.rowcount == 0:
             raise HTTPException(404, "QA 不存在")
+    embedding.store.remove(qa_id)  # 级联删了 qa_embedding 行，这里同步内存
     return {"ok": True}
+
+
+def _sync_qa_embedding(qa_id: int) -> None:
+    """QA 写入后同步向量（同步阻塞，单条毫秒级；embedding 不可用时静默跳过，
+    检索侧 ensure_ready 会惰性补齐）。"""
+    import asyncio as _aio
+
+    async def _do():
+        try:
+            row = db.get_conn().execute(
+                "SELECT id, question, question_aliases, status FROM qa WHERE id=?",
+                (qa_id,)).fetchone()
+            if row is None or row["status"] != "active":
+                embedding.store.remove(qa_id)
+                return
+            vec = (await embedding.embed_async([embedding.text_of(dict(row))]))[0]
+            embedding.store.upsert(qa_id, vec, embedding._hash(embedding.text_of(dict(row))))
+        except embedding.EmbeddingError:
+            pass  # API 挂了不阻塞 CRUD；下次检索时 ensure_ready 补
+
+    try:
+        loop = _aio.get_running_loop()
+        loop.create_task(_do())
+    except RuntimeError:
+        _aio.run(_do())
 
 
 class ImportIn(BaseModel):
@@ -547,6 +575,9 @@ SETTING_SPECS = {  # key: (类型, 下限, 上限)
     "route_min_score": (float, 0.0, 1.0),
     "keyword_match_min_score": (float, 0.0, 1.0),
     "keyword_direct_score": (float, 0.0, 1.0),
+    "vector_match_score": (float, 0.0, 1.0),
+    "vector_fallback_score": (float, 0.0, 1.0),
+    "vector_top_k": (int, 1, 10),
     "default_top_k": (int, 1, 10),
 }
 _SETTING_DEFAULTS = {
@@ -554,6 +585,9 @@ _SETTING_DEFAULTS = {
     "route_min_score": lambda: config.ROUTE_MIN_SCORE,
     "keyword_match_min_score": lambda: config.KEYWORD_MATCH_MIN_SCORE,
     "keyword_direct_score": lambda: config.KEYWORD_DIRECT_SCORE,
+    "vector_match_score": lambda: config.VECTOR_MATCH_SCORE,
+    "vector_fallback_score": lambda: config.VECTOR_FALLBACK_SCORE,
+    "vector_top_k": lambda: config.VECTOR_TOP_K,
     "default_top_k": lambda: 3,
 }
 
@@ -568,6 +602,7 @@ def get_settings() -> dict:
         except (TypeError, ValueError):
             v = typ(_SETTING_DEFAULTS[key]())
         out[key] = max(lo, min(hi, v))
+    out["answer_mode"] = rows.get("answer_mode", "strict")  # strict/loose
     return out
 
 
@@ -577,12 +612,24 @@ def read_settings():
 
 
 class SettingsIn(BaseModel):
-    values: dict[str, float | int]
+    values: dict[str, float | int | str]
+
+
+def _valid_answer_mode(v: str) -> bool:
+    return v in ("strict", "loose")
 
 
 @app.put("/api/settings", dependencies=[Depends(auth_dep)])
 def update_settings(body: SettingsIn):
     for key, value in body.values.items():
+        if key == "answer_mode":
+            if not _valid_answer_mode(str(value)):
+                raise HTTPException(400, "answer_mode 只能是 strict 或 loose")
+            with db.tx() as conn:
+                conn.execute(
+                    "INSERT INTO settings(key, value) VALUES(?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(value)))
+            continue
         if key not in SETTING_SPECS:
             raise HTTPException(400, f"未知参数: {key}")
         typ, lo, hi = SETTING_SPECS[key]
@@ -599,14 +646,16 @@ def update_settings(body: SettingsIn):
     return get_settings()
 
 
-# ---------- 匹配（两级 LLM 路由，流式过程 + 三层兜底） ----------
+# ---------- 匹配（三级漏斗：向量0.72 → 关键词 → 向量兜底0.55+LLM核验 → 严格/宽松） ----------
 async def _run_match(body: MatchIn, emit) -> dict:
-    """执行完整匹配；emit(stage, data) 用于流式上报进度，非流式传 no-op。
+    """执行完整匹配；emit(stage, data) 用于流式上报进度，非流式传 no-op.
 
-    链路：Step0 全部库关键词直配（≥直配线直接命中，省 LLM）
-          → 未命中 Step1 LLM 意图识别 → 意图挂载知识库合并池
-          → Step2 池内全量精配（一次 LLM 调用出 top-k）
-          →（未达标时）全部库关键词兜底 → 记日志。
+    链路（用户query漏斗）：
+      Step0 关键词直配（毫秒级，≥直配线直接命中，省所有 LLM/embedding 调用）
+      → Step1 向量检索（标准阈值 vector_match_score）
+      → Step2 关键词检索（二元组重合度 ≥ keyword_match_min_score）
+      → Step3 向量兜底（阈值 vector_fallback_score，top-k）+ LLM 核验能否回答
+      → 全部落空：严格模式=提示暂无答案；宽松模式=LLM 自身知识回答
     """
     t0 = time.perf_counter()
     question = body.question.strip()
@@ -616,92 +665,118 @@ async def _run_match(body: MatchIn, emit) -> dict:
     s = get_settings()
     top_k = body.top_k or int(s["default_top_k"])
     min_score = body.min_score if body.min_score is not None else s["match_min_score"]
-    route_min = s["route_min_score"]
     kw_min = s["keyword_match_min_score"]
     direct_score = s["keyword_direct_score"]
+    vec_match = s["vector_match_score"]
+    vec_fallback = s["vector_fallback_score"]
+    vec_top_k = int(s["vector_top_k"])
+    answer_mode = s["answer_mode"]
     trace: dict = {"params": {"top_k": top_k, "match_min_score": min_score,
-                              "route_min_score": route_min, "keyword_match_min_score": kw_min,
-                              "keyword_direct_score": direct_score}}
+                              "keyword_match_min_score": kw_min,
+                              "keyword_direct_score": direct_score,
+                              "vector_match_score": vec_match,
+                              "vector_fallback_score": vec_fallback,
+                              "vector_top_k": vec_top_k, "answer_mode": answer_mode}}
 
-    # 全局资源只查一次：所有库 active QA + 全局意图（含挂载的库）
     all_qas = [dict(r) for r in conn.execute(
         "SELECT qa.* FROM qa WHERE qa.status='active'").fetchall()]
-    intents = []
-    for r in conn.execute("SELECT * FROM intent ORDER BY sort_order, id").fetchall():
-        it = dict(r)
-        kb_rows = conn.execute(
-            "SELECT kb.id, kb.name FROM intent_kb ik JOIN kb ON ik.kb_id=kb.id WHERE ik.intent_id=?",
-            (r["id"],)).fetchall()
-        it["kb_ids"] = [k["id"] for k in kb_rows]
-        it["kb_names"] = [k["name"] for k in kb_rows]
-        intents.append(it)
-    if not intents:
-        raise HTTPException(400, "还没有任何意图，请先在题库管理页创建意图并挂载知识库")
+    if not all_qas:
+        raise HTTPException(400, "知识库为空，请先添加 QA")
+    qa_map = {q["id"]: q for q in all_qas}
 
-    # ---- Step 0 关键词直配（扫描所有库，毫秒级；命中则省去两轮 LLM 调用）----
-    route_res = None
-    qas, matched, degraded = [], [], False
+    matched: list[llm.MatchCandidate] = []
+    route_view: dict = {}
+    funnel_stage = ""
+
+    # ---- Step 0 关键词直配（扫描所有库，毫秒级）----
     tp = time.perf_counter()
-    direct, d_detail = llm.keyword_match_global(question, all_qas, direct_score) if all_qas \
-        else ([], {"engine": "none", "pool_size": 0, "threshold": direct_score, "best_score": 0.0})
+    direct, d_detail = llm.keyword_match_global(question, all_qas, direct_score)
     trace["prematch"] = {**d_detail, "ms": round((time.perf_counter() - tp) * 1000)}
     await emit("prematch", trace["prematch"])
     if direct:
-        qas = all_qas
         matched = [llm.MatchCandidate(c.qa_id, c.score, f"关键词直配（重合度 {c.score}）")
                    for c in direct]
-    else:
-        # ---- Step 1 LLM 意图识别（意图 → 挂载的知识库）----
-        t1 = time.perf_counter()
-        route_res = await llm.route(question, intents, route_min)
-        trace["route"] = {**route_res.detail, "ms": round((time.perf_counter() - t1) * 1000)}
-        intent = next((it for it in intents if it["id"] == route_res.intent_id), None)
-        await emit("route", {
-            "intent_id": route_res.intent_id,
-            "intent_name": intent["name"] if intent else None,
-            "kb_names": intent["kb_names"] if intent else [],
-            "confidence": route_res.confidence, "reason": route_res.reason,
-            "degraded": route_res.degraded, "ms": trace["route"]["ms"], **route_res.detail,
-        })
+        funnel_stage = "direct"
+        route_view = {"intent_id": None, "intent_name": "关键词直配", "kb_names": [],
+                      "confidence": matched[0].score, "degraded": False,
+                      "reason": "关键词重合度达标，直接命中"}
 
-        # ---- Step 2 全量精配（意图挂载的所有知识库 QA 合并池，一次 LLM 调用）----
-        pool = []
-        if intent and intent["kb_ids"]:
-            kb_set = set(intent["kb_ids"])
-            pool = [q for q in all_qas if q["kb_id"] in kb_set]
-        if pool:
-            t2 = time.perf_counter()
-            m_res = await llm.match_candidates(question, pool, min_score=min_score, kw_min=kw_min, limit=top_k)
-            matched, degraded = m_res.candidates, m_res.degraded
-            trace["match"] = {**m_res.detail, "ms": round((time.perf_counter() - t2) * 1000)}
-            await emit("match", trace["match"])
-            if not matched and config.KEYWORD_FALLBACK:
-                # 意图池内没匹配到（含低分被滤）→ 全部库关键词兜底（意图可能识别错）
-                t3 = time.perf_counter()
-                global_matched, g_detail = llm.keyword_match_global(question, all_qas, kw_min)
-                trace["fallback"] = {**g_detail, "trigger": "意图池内无达标候选",
-                                     "ms": round((time.perf_counter() - t3) * 1000)}
-                await emit("fallback", trace["fallback"])
-                if global_matched:
-                    qas, matched, degraded = all_qas, global_matched, True
-        elif config.KEYWORD_FALLBACK:
-            # 意图未定位或挂载库为空 → 全部库关键词兜底，尽量给候选而不是直接判"新问题"
-            t3 = time.perf_counter()
-            if all_qas:
-                matched, g_detail = llm.keyword_match_global(question, all_qas, kw_min)
-                degraded = True
-                trace["fallback"] = {**g_detail, "trigger": "意图未定位",
-                                     "ms": round((time.perf_counter() - t3) * 1000)}
-                await emit("fallback", trace["fallback"])
-                if matched:
-                    qas = all_qas
-            else:
-                trace["fallback"] = {"engine": "none", "trigger": "意图未定位且库内无 QA"}
+    # ---- Step 1 向量检索（标准阈值）----
+    if not matched:
+        tp = time.perf_counter()
+        try:
+            hits, v_detail = await embedding.search_async(question, top_k=top_k)
+        except embedding.EmbeddingError as e:
+            hits, v_detail = [], {"engine": "vector", "available": False, "reason": str(e)}
+        trace["vector"] = {**v_detail,
+                           "hits": [(h.qa_id, h.score) for h in hits],
+                           "ms": round((time.perf_counter() - tp) * 1000)}
+        await emit("vector", trace["vector"])
+        passed = [h for h in hits if h.score >= vec_match]
+        if passed:
+            matched = [llm.MatchCandidate(h.qa_id, h.score, f"向量检索（相似度 {h.score}）")
+                       for h in passed[:top_k]]
+            funnel_stage = "vector"
+            route_view = {"intent_id": None, "intent_name": "向量检索", "kb_names": [],
+                          "confidence": passed[0].score, "degraded": False,
+                          "reason": f"语义相似度 {passed[0].score} ≥ {vec_match}"}
+
+    # ---- Step 2 关键词检索 ----
+    if not matched:
+        tp = time.perf_counter()
+        kw_hits, kw_detail = llm.keyword_match_global(question, all_qas, kw_min)
+        trace["keyword"] = {**kw_detail,
+                            "hits": [(c.qa_id, c.score) for c in kw_hits],
+                            "ms": round((time.perf_counter() - tp) * 1000)}
+        await emit("keyword", trace["keyword"])
+        if kw_hits:
+            matched = kw_hits[:top_k]
+            funnel_stage = "keyword"
+            route_view = {"intent_id": None, "intent_name": "关键词检索", "kb_names": [],
+                          "confidence": kw_hits[0].score, "degraded": True,
+                          "reason": f"关键词重合度 {kw_hits[0].score} ≥ {kw_min}"}
+
+    # ---- Step 3 向量兜底 + LLM 核验 ----
+    verify_ctx: list[dict] = []
+    if not matched:
+        tp = time.perf_counter()
+        try:
+            fb_hits, fb_detail = await embedding.search_async(question, top_k=vec_top_k)
+        except embedding.EmbeddingError as e:
+            fb_hits, fb_detail = [], {"engine": "vector", "available": False, "reason": str(e)}
+        fb_passed = [h for h in fb_hits if h.score >= vec_fallback]
+        trace["fallback_vector"] = {**fb_detail,
+                                    "threshold": vec_fallback,
+                                    "hits": [(h.qa_id, h.score) for h in fb_passed],
+                                    "ms": round((time.perf_counter() - tp) * 1000)}
+        await emit("fallback_vector", trace["fallback_vector"])
+        if fb_passed:
+            cands = [qa_map[h.qa_id] for h in fb_passed if h.qa_id in qa_map]
+            try:
+                t4 = time.perf_counter()
+                verified = await llm.verify_candidates(question, cands)
+                trace["verify"] = {"results": [(v.qa_id, v.can_answer, v.score, v.reason)
+                                               for v in verified],
+                                   "ms": round((time.perf_counter() - t4) * 1000)}
+                await emit("verify", trace["verify"])
+                ok = [v for v in verified if v.can_answer]
+                verify_ctx = [qa_map[v.qa_id] for v in verified if v.qa_id in qa_map]
+                if ok:
+                    matched = [llm.MatchCandidate(v.qa_id, v.score, f"兜底核验通过：{v.reason}")
+                               for v in ok[:top_k]]
+                    funnel_stage = "verified"
+                    route_view = {"intent_id": None, "intent_name": "兜底核验", "kb_names": [],
+                                  "confidence": ok[0].score, "degraded": True,
+                                  "reason": f"向量兜底候选经 LLM 核验可回答（相似度 {fb_passed[0].score}）"}
+            except llm.LLMError as e:
+                trace["verify"] = {"error": str(e)}
+                await emit("verify", trace["verify"])
+
+    trace["funnel"] = funnel_stage or "none"
 
     # ---- 命中处理与日志 ----
     qa_details, hit_ids = [], []
     if matched:
-        qa_map = {q["id"]: q for q in qas}
         for c in matched[:top_k]:
             qa = qa_map[c.qa_id]
             hit_ids.append(c.qa_id)
@@ -717,30 +792,35 @@ async def _run_match(body: MatchIn, emit) -> dict:
                 txn.execute(
                     "UPDATE qa SET hit_count=hit_count+1, last_asked_at=? WHERE id=?", (now, qa_id))
 
+    # ---- 全部落空：严格 / 宽松 ----
+    free_text = None
+    if not matched:
+        if answer_mode == "loose":
+            try:
+                tp = time.perf_counter()
+                free_text = await llm.free_answer(question, verify_ctx)
+                trace["free_answer"] = {"ok": True,
+                                        "ms": round((time.perf_counter() - tp) * 1000)}
+            except llm.LLMError as e:
+                trace["free_answer"] = {"ok": False, "error": str(e)}
+            await emit("free_answer", trace.get("free_answer", {"ok": False}))
+        else:
+            trace["free_answer"] = {"ok": False, "skipped": "strict"}
+
+    if not route_view:
+        route_view = {"intent_id": None, "intent_name": None, "kb_names": [],
+                      "confidence": 0.0, "degraded": False,
+                      "reason": "三级检索均未命中"}
+
     source = "match" if hit_ids else "new"
     with db.tx() as txn:
         cur = txn.execute(
             "INSERT INTO query_log(kb_id, question, intent_id, route_confidence, matched_qa_ids, source) "
             "VALUES(?,?,?,?,?,?)",
-            (body.kb_id, question,
-             route_res.intent_id if route_res else None,
-             route_res.confidence if route_res else (matched[0].score if matched else 0.0),
+            (body.kb_id, question, None, route_view["confidence"],
              json.dumps(hit_ids), source),
         )
         log_id = cur.lastrowid
-
-    if route_res:
-        intent = next((it for it in intents if it["id"] == route_res.intent_id), None)
-        route_view = {"intent_id": route_res.intent_id,
-                      "intent_name": intent["name"] if intent else None,
-                      "kb_names": intent["kb_names"] if intent else [],
-                      "confidence": route_res.confidence,
-                      "reason": route_res.reason, "degraded": degraded}
-    else:
-        # 关键词直配命中：未走 LLM 路由
-        route_view = {"intent_id": None, "intent_name": "关键词直配", "kb_names": [],
-                      "confidence": matched[0].score if matched else trace["prematch"].get("best_score", 0.0),
-                      "reason": "关键词重合度达标，直接命中，未调用 LLM", "degraded": False}
 
     trace["total_ms"] = round((time.perf_counter() - t0) * 1000)
     result = {
@@ -748,6 +828,8 @@ async def _run_match(body: MatchIn, emit) -> dict:
         "route": route_view,
         "matched": qa_details,
         "source": source,
+        "answer_mode": answer_mode,
+        "free_answer": free_text,
         "trace": trace,
     }
     await emit("done", result)
@@ -888,3 +970,22 @@ def startup():
     for e in errors:
         print(f"[config 警告] {e}")
     db.init_db()
+    embedding.store.load()  # 向量缓存预热（表可能为空，检索时惰性补算）
+
+
+# ---------- 向量管理 ----------
+@app.get("/api/vectors/status", dependencies=[Depends(auth_dep)])
+def vector_status():
+    """向量库状态：总数 / 缺失数（stale）。"""
+    return {"total": embedding.store.count, "stale": len(embedding.stale_ids()),
+            "model": config.EMBEDDING_MODEL, "available": embedding.store.available}
+
+
+@app.post("/api/vectors/rebuild", dependencies=[Depends(auth_dep)])
+async def vector_rebuild():
+    """全量重建向量（换 embedding 模型或文本批量变更后）。"""
+    try:
+        result = await embedding.rebuild_all()
+        return {"ok": True, **result}
+    except embedding.EmbeddingError as e:
+        raise HTTPException(502, f"embedding 调用失败: {e}")

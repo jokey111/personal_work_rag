@@ -188,7 +188,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
         <div class="err" v-if="matchErr">{{ matchErr }}</div>
 
         <!-- 实时进度：每一步做什么、用什么引擎、耗时 -->
-        <div v-if="matching && !matchSteps.length" class="step-card running">⏳ ① 全库关键词直配中…（毫秒级，命中则免 LLM）</div>
+        <div v-if="matching && !matchSteps.length" class="step-card running">⏳ ① 全库关键词直配中…（毫秒级，命中则免后续步骤）</div>
         <div v-for="s in matchSteps" :key="s.stage" class="step-card" :class="{running: s._running}">
           <div class="step-head">
             <b>{{ s.label }}</b>
@@ -226,7 +226,13 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
           </div>
         </div>
 
-        <div v-if="matchResult.source==='new'" class="empty-new">
+        <div v-if="matchResult.free_answer" class="candidate" style="border-left:3px solid #f59e0b">
+          <div class="head"><span class="q">🤖 模型生成回答</span><span class="score" style="color:#b45309">非题库答案</span></div>
+          <div class="meta">三级检索均未命中 · 宽松模式下由大模型用自身知识回答，仅供参考</div>
+          <div class="body" style="white-space:pre-wrap">{{ matchResult.free_answer }}</div>
+        </div>
+
+        <div v-if="matchResult.source==='new' && !matchResult.free_answer" class="empty-new">
           <div>题库还没有覆盖这个问题，已记录到<b>新问题池</b>（复盘统计页可一键转正为 QA）。</div>
           <div style="font-size:12px;margin-top:6px;color:#b45309" v-html="noMatchReason"></div>
         </div>
@@ -372,20 +378,30 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
       <div class="card">
         <div class="section-title"><h3>⚙ 匹配参数</h3><span v-if="settingsSaved" class="ok-tip">已保存</span></div>
         <p style="font-size:12px;color:#94a3b8;margin:0 0 12px 2px;line-height:1.6">
-          保存后立即生效（存服务器数据库，无需重启）。阈值调高 → 更严格、宁可进新问题池；调低 → 更容易出候选。</p>
+          保存后立即生效（存服务器数据库，无需重启）。阈值调高 → 更严格、宁可进新问题池；调低 → 更容易出候选。<br>
+          检索漏斗：① 关键词直配 → ② 向量检索 → ③ 关键词检索 → ④ 向量兜底+LLM核验 → 严格/宽松分支。</p>
         <div class="form-grid">
-          <label class="field"><span>关键词直配线 keyword_direct_score（默认 0.7，全库重合度≥此值直接命中、免 LLM）</span>
+          <label class="field"><span>答案模式 answer_mode（严格=未命中提示暂无答案；宽松=大模型用自身知识回答）</span>
+            <select class="input" v-model="settingsForm.answer_mode">
+              <option value="strict">严格模式 strict</option>
+              <option value="loose">宽松模式 loose</option>
+            </select></label>
+          <label class="field"><span>关键词直配线 keyword_direct_score（默认 0.7，全库重合度≥此值直接命中）</span>
             <input class="input" type="number" step="0.05" min="0" max="1" v-model="settingsForm.keyword_direct_score"></label>
-          <label class="field"><span>LLM 精配最低命中分 match_min_score（默认 0.7）</span>
-            <input class="input" type="number" step="0.05" min="0" max="1" v-model="settingsForm.match_min_score"></label>
-          <label class="field"><span>关键词路由定位线 route_min_score（默认 0.3，仅 LLM 不可用时生效）</span>
-            <input class="input" type="number" step="0.05" min="0" max="1" v-model="settingsForm.route_min_score"></label>
-          <label class="field"><span>关键词兜底命中线 keyword_match_min_score（默认 0.7）</span>
+          <label class="field"><span>向量检索标准阈值 vector_match_score（默认 0.72，相似度≥此值直接命中）</span>
+            <input class="input" type="number" step="0.01" min="0" max="1" v-model="settingsForm.vector_match_score"></label>
+          <label class="field"><span>关键词检索命中线 keyword_match_min_score（默认 0.7）</span>
             <input class="input" type="number" step="0.05" min="0" max="1" v-model="settingsForm.keyword_match_min_score"></label>
+          <label class="field"><span>向量兜底阈值 vector_fallback_score（默认 0.55，低于标准线时的二次打捞）</span>
+            <input class="input" type="number" step="0.01" min="0" max="1" v-model="settingsForm.vector_fallback_score"></label>
+          <label class="field"><span>向量兜底候选数 vector_top_k（默认 5，捞回后交 LLM 核验）</span>
+            <input class="input" type="number" step="1" min="1" max="10" v-model="settingsForm.vector_top_k"></label>
           <label class="field"><span>默认返回条数 default_top_k（1~10）</span>
             <input class="input" type="number" step="1" min="1" max="10" v-model="settingsForm.default_top_k"></label>
         </div>
-        <div style="display:flex;justify-content:flex-end">
+        <div style="display:flex;justify-content:flex-end;gap:10px;align-items:center">
+          <span v-if="vectorStatus" style="font-size:12px;color:#94a3b8">向量库：{{ vectorStatus.total }} 条 · 待更新 {{ vectorStatus.stale }} 条 · 模型 {{ vectorStatus.model }}</span>
+          <button class="btn ghost" @click="rebuildVectors" :disabled="rebuilding">{{ rebuilding ? '重建中…' : '🔄 重建向量库' }}</button>
           <button class="btn" @click="saveSettings" :disabled="settingsSaving">{{ settingsSaving ? '保存中…' : '保存参数' }}</button>
         </div>
       </div>
@@ -633,6 +649,7 @@ createApp({
       question: '', matching: false, matchErr: '', matchResult: null, feedbackDone: {},
       topK: '', matchSteps: [],
       settingsSaving: false, settingsSaved: false, settingsForm: {},
+      vectorStatus: null, rebuilding: false,
       intents: [],
       categories: [], expandedCats: {}, filterCategoryId: 'all', catsByKb: {},
       tags: [], filterTagId: 'all',
@@ -676,20 +693,25 @@ createApp({
       if (!t) return '';
       const parts = [];
       if (t.prematch?.best_score !== undefined) {
-        parts.push(`关键词直配：全库 ${t.prematch.pool_size} 题最高重合度 ${t.prematch.best_score} < 直配线 ${t.prematch.threshold}`);
+        parts.push(`① 关键词直配：全库 ${t.prematch.pool_size} 题最高重合度 ${t.prematch.best_score} < 直配线 ${t.prematch.threshold}`);
       }
-      if (t.match?.engine === 'llm') {
-        if (t.match.raw_count > 0 && t.match.dropped?.length) {
-          const d = t.match.dropped.map(x => `「${(x.question || x.id).slice(0, 25)}」${x.score}分`).join('、');
-          parts.push(`LLM 给出 ${t.match.raw_count} 个候选，最高 ${t.match.best_raw_score} 分 < 阈值 ${t.match.min_score}（${d}）已过滤`);
-        } else if (!t.match.raw_count) {
-          parts.push(`LLM 判断候选池 ${t.match.pool_size} 个问题均无法直接回答该提问（阈值 ${t.match.min_score}）`);
-        }
+      if (t.vector) {
+        if (t.vector.available === false) parts.push(`② 向量检索不可用：${t.vector.reason || '未就绪'}`);
+        else if (t.vector.hits?.length) {
+          const best = t.vector.hits[0];
+          parts.push(`② 向量检索：最高相似度 ${best[1]} < 标准阈值 ${t.params.vector_match_score}`);
+        } else parts.push('② 向量检索：无候选');
       }
-      if (t.fallback?.best_score !== undefined) {
-        parts.push(`全库关键词兜底：最高重合度 ${t.fallback.best_score} < 命中线 ${t.fallback.threshold}`);
-      } else if (t.fallback?.engine === 'none') {
-        parts.push(t.fallback.trigger || '无候选可匹配');
+      if (t.keyword) {
+        parts.push(`③ 关键词检索：最高重合度 ${t.keyword.best_score} < 命中线 ${t.keyword.threshold}`);
+      }
+      if (t.fallback_vector) {
+        if (t.fallback_vector.available === false) parts.push(`④ 向量兜底不可用`);
+        else if (t.fallback_vector.hits?.length) {
+          const best = t.fallback_vector.hits[0];
+          const okN = (t.verify?.results || []).filter(r => r[1]).length;
+          parts.push(`④ 向量兜底：最高 ${best[1]} ≥ ${t.params.vector_fallback_score} 捞回 ${t.fallback_vector.hits.length} 条，⑤ LLM 核验可回答 ${okN} 条`);
+        } else parts.push(`④ 向量兜底：全部 < ${t.params.vector_fallback_score}，无候选`);
       }
       return parts.join('；');
     },
@@ -822,41 +844,64 @@ createApp({
       if (evt.stage === 'prematch') {
         label = '① 关键词直配';
         engineLabel = d.engine === 'none' ? '无' : '全库字符匹配';
-        const hit = d.kept ? `命中 ${d.kept} 个，跳过 LLM 直接返回` : `最高重合度 ${d.best_score ?? '-'} < 直配线 ${d.threshold ?? '-'}，转 LLM 链路`;
+        const hit = d.kept ? `命中 ${d.kept} 个，直接返回（免后续步骤）` : `最高重合度 ${d.best_score ?? '-'} < 直配线 ${d.threshold ?? '-'}，进入向量检索`;
         text = `扫描全库 ${d.pool_size} 个 QA（${d.ms ?? '-'} ms） · ${hit}`;
         this.matchSteps.push({ stage: evt.stage, label, engine: d.engine === 'none' ? 'none' : 'keyword', engineLabel, ms: d.ms, text });
-      } else if (evt.stage === 'route') {
-        label = '② LLM 意图识别';
-        engineLabel = d.engine === 'llm' ? 'LLM 语义识别' : (d.engine === 'keyword' ? '关键词兜底' : '无');
-        const target = !d.intent_id
-          ? `<span class="dim">未能识别意图（最高重合度 ${d.best_score ?? '-'} < 定位线 ${d.threshold ?? '-'}）</span>`
-          : `识别为 <b>${d.intent_name || d.intent_id}</b> · confidence ${d.confidence}`
-            + (d.kb_names?.length ? `<br><span class="dim">→ 在其挂载的知识库中检索：${d.kb_names.join('、')}</span>` : '');
-        text = `${target}<br><span class="dim">${d.reason || ''} · 候选意图 ${d.pool_size ?? '-'} 个</span>`;
-        this.matchSteps.push({ stage: evt.stage, label, engine: d.engine, engineLabel, ms: d.ms, text });
-      } else if (evt.stage === 'match') {
-        label = '③ LLM 全量精配';
-        engineLabel = d.engine === 'llm' ? 'LLM 语义匹配' : (d.engine === 'keyword' ? '关键词兜底' : '无');
-        let kept;
-        if (d.engine === 'llm') {
-          if (d.raw_count === 0) kept = 'LLM 判断所有候选均无法直接回答，未给出候选';
-          else {
-            const ok = d.raw_count - (d.dropped?.length || 0);
-            kept = `LLM 给出 ${d.raw_count} 个候选 → 达标 ${ok} 个（阈值 ${d.min_score}）`;
-            if (ok === 0) kept += `，最高 ${d.best_raw_score} 分 < 阈值，全部过滤`;
-          }
+      } else if (evt.stage === 'vector') {
+        label = '② 向量检索';
+        if (!d.available) {
+          text = `<span class="dim">向量引擎不可用：${d.reason || '未就绪'}，跳过进入关键词检索</span>`;
+          this.matchSteps.push({ stage: evt.stage, label, engine: 'none', engineLabel: '不可用', ms: d.ms, text });
         } else {
-          kept = `最高重合度 ${d.best_score ?? '-'}（命中线 ${d.threshold ?? '-'}）`;
+          engineLabel = '语义相似度';
+          const hits = d.hits || [];
+          const passed = d.passed_hint || '';
+          const hitText = hits.length
+            ? hits.map(h => `#${h[0]} ${h[1]}`).join('、')
+            : '无候选';
+          text = `向量库 ${d.pool_size} 条 · top${d.top_k}：${hitText}`;
+          this.matchSteps.push({ stage: evt.stage, label, engine: 'vector', engineLabel, ms: d.ms, text });
         }
-        const dropped = d.dropped?.length
-          ? `<br><span class="dim">已过滤：${d.dropped.map(x => `「${(x.question || x.id).slice(0, 20)}」${x.score}分`).join('、')}</span>` : '';
-        text = `候选池 ${d.pool_size} 个 · ${kept}${dropped}`;
-        this.matchSteps.push({ stage: evt.stage, label, engine: d.engine, engineLabel, ms: d.ms, text });
-      } else if (evt.stage === 'fallback') {
-        label = '④ 全部库二次兜底';
-        engineLabel = '关键词';
-        text = `触发原因：${d.trigger} · 扫描全库 ${d.pool_size} 个 QA · 最高重合度 ${d.best_score}（命中线 ${d.threshold}）`;
+      } else if (evt.stage === 'keyword') {
+        label = '③ 关键词检索';
+        engineLabel = '二元组重合度';
+        const hits = d.hits || [];
+        const hitText = hits.length ? hits.map(h => `#${h[0]} ${h[1]}`).join('、') : '无候选';
+        text = `扫描 ${d.pool_size} 个 QA · 命中 ${d.kept ?? hits.length} 个（阈值 ${d.threshold}）：${hitText}`;
         this.matchSteps.push({ stage: evt.stage, label, engine: 'keyword', engineLabel, ms: d.ms, text });
+      } else if (evt.stage === 'fallback_vector') {
+        label = '④ 向量兜底';
+        if (!d.available) {
+          text = `<span class="dim">向量引擎不可用：${d.reason || '未就绪'}</span>`;
+          this.matchSteps.push({ stage: evt.stage, label, engine: 'none', engineLabel: '不可用', ms: d.ms, text });
+        } else {
+          engineLabel = '低阈值语义';
+          const hits = d.hits || [];
+          const hitText = hits.length ? hits.map(h => `#${h[0]} ${h[1]}`).join('、') : `全部 < ${d.threshold}，无候选`;
+          text = `阈值 ${d.threshold} · top${d.top_k}：${hitText}`;
+          this.matchSteps.push({ stage: evt.stage, label, engine: 'vector', engineLabel, ms: d.ms, text });
+        }
+      } else if (evt.stage === 'verify') {
+        label = '⑤ LLM 核验';
+        if (d.error) {
+          text = `<span class="dim">核验失败：${d.error}</span>`;
+          this.matchSteps.push({ stage: evt.stage, label, engine: 'none', engineLabel: '失败', ms: d.ms, text });
+        } else {
+          engineLabel = 'LLM 判断';
+          const rs = d.results || [];
+          const okN = rs.filter(r => r[1]).length;
+          const detail = rs.map(r => `#${r[0]} ${r[1] ? '✓' : '✗'} ${r[2]}`).join('、');
+          text = `候选 ${rs.length} 个 → 可回答 ${okN} 个${detail ? `<br><span class="dim">${detail}</span>` : ''}`;
+          this.matchSteps.push({ stage: evt.stage, label, engine: 'llm', engineLabel, ms: d.ms, text });
+        }
+      } else if (evt.stage === 'free_answer') {
+        label = '⑥ 宽松模式自答';
+        if (d.skipped === 'strict') {
+          text = `<span class="dim">严格模式：不生成模型回答，提示暂无答案</span>`;
+          this.matchSteps.push({ stage: evt.stage, label, engine: 'none', engineLabel: '跳过', ms: 0, text });
+        } else if (d.ok) {
+          this.matchSteps.push({ stage: evt.stage, label: '⑥ 宽松模式自答', engine: 'llm', engineLabel: '模型生成', ms: d.ms, text: '已用模型自身知识生成回答（见下方答案区）' });
+        }
       }
     },
     async loadSettings() {
@@ -894,6 +939,19 @@ createApp({
     async goSettings() {
       this.page = 'settings';
       await Promise.all([this.loadIntents(), this.loadSettings(), this.loadKbs(), this.loadTags(), this.loadCategories()]);
+      this.loadVectorStatus();
+    },
+    async loadVectorStatus() {
+      try { this.vectorStatus = await this.api('GET', '/api/vectors/status'); } catch (e) { /* 忽略 */ }
+    },
+    async rebuildVectors() {
+      if (!confirm('全量重建向量库？QA 数量多时会调用相应次数的 embedding API（通常几秒内完成）。')) return;
+      this.rebuilding = true;
+      try {
+        const r = await this.api('POST', '/api/vectors/rebuild');
+        alert(`重建完成：共 ${r.total} 条向量`);
+        this.loadVectorStatus();
+      } catch (e) { alert('重建失败：' + e.message); } finally { this.rebuilding = false; }
     },
     async loadQas() {
       if (!this.kbId) return;

@@ -96,11 +96,21 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS qa_embedding (
+  qa_id     INTEGER PRIMARY KEY REFERENCES qa(id) ON DELETE CASCADE,
+  model     TEXT NOT NULL,             -- 生成向量的 embedding 模型名（换模型可检测重刷）
+  dim       INTEGER NOT NULL,
+  vec       BLOB NOT NULL,             -- float32 小端序列化
+  text_hash TEXT NOT NULL,             -- 问题+别名哈希，编辑后检测需重算
+  updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_qa_kb       ON qa(kb_id);
 CREATE INDEX IF NOT EXISTS idx_intent_kb   ON intent_kb(intent_id);
 CREATE INDEX IF NOT EXISTS idx_qa_question ON qa(question);
 CREATE INDEX IF NOT EXISTS idx_qa_tag      ON qa_tag(tag_id);
 CREATE INDEX IF NOT EXISTS idx_log_time    ON query_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_qa_emb_model ON qa_embedding(model);
 """
 
 # 单列索引：依赖 qa.category_id 列（v3 老库补列之后才能建）
