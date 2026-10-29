@@ -166,6 +166,11 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
 .qa-table th { position: relative; user-select: none; }
 .col-grip { position: absolute; top: 0; right: -4px; width: 9px; height: 100%; cursor: col-resize; z-index: 2; }
 .col-grip:hover { background: linear-gradient(90deg, transparent, var(--primary-border)); }
+/* 关键词搜索框内清空按钮 */
+.search-box { position: relative; display: inline-flex; }
+.search-box .input { padding-right: 28px; }
+.search-clear { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; border: none; border-radius: 50%; background: var(--hover); color: var(--text-3); font-size: 13px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; transition: background .15s ease, color .15s ease; }
+.search-clear:hover { background: var(--danger-bg); color: var(--danger); }
 /* 题库管理：左栏（分类上 / 标签下），固定一屏高，两侧独立滚动 */
 .tree-col { position: sticky; top: 80px; align-self: start; height: calc(100vh - 104px); min-height: 420px; background: var(--card); border-radius: 14px; padding: 14px; box-shadow: var(--card-shadow); display: flex; flex-direction: column; gap: 12px; }
 .tree-half { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -480,8 +485,10 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
         <div class="section-title">
           <h3>QA 列表 <span class="filter-desc">{{ qaFilterDesc }}</span></h3>
           <div class="btn-group">
-            <input class="input" style="width:180px" placeholder="🔍 关键词" v-model="keyword" @keyup.enter="loadQas()">
-            <button class="btn sm ghost" @click="resetFilter">重置</button>
+            <div class="search-box">
+              <input class="input" style="width:180px" placeholder="🔍 关键词" v-model="keyword" @keyup.enter="loadQas()">
+              <button v-if="keyword" class="search-clear" @click="keyword=''; loadQas()" title="清空关键词">×</button>
+            </div>
             <button class="btn sm ghost" @click="openImport">📥 批量导入</button>
             <button class="btn sm" @click="openQaEdit(null)">＋ 新增QA</button>
           </div>
@@ -1173,10 +1180,6 @@ createApp({
       if (this.filterTagId !== 'all') url += `&tag_id=${this.filterTagId}`;
       if (this.keyword) url += `&q=${encodeURIComponent(this.keyword)}`;
       this.qas = await this.api('GET', url);
-    },
-    resetFilter() {
-      this.keyword = ''; this.filterCategoryId = 'all'; this.filterTagId = 'all';
-      this.loadQas();
     },
     async loadStats() {
       const [ov, topCats, topTags, records] = await Promise.all([
