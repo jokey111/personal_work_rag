@@ -178,6 +178,15 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
 .form-grid .full { grid-column: 1 / -1; }
 .modal-mask { position: fixed; inset: 0; background: var(--mask); z-index: 30; display: flex; align-items: center; justify-content: center; }
 .modal { background: var(--card); border-radius: 14px; padding: 22px 24px; width: min(440px, 92vw); }
+/* toast 通知 */
+.toast-wrap { position: fixed; top: 18px; left: 50%; transform: translateX(-50%); z-index: 70; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
+.toast { background: var(--card); color: var(--text); border: 1px solid var(--border); border-left: 3px solid var(--primary); border-radius: 10px; padding: 9px 18px; font-size: 13px; box-shadow: 0 6px 20px rgba(0,0,0,.12); max-width: min(480px, 90vw); }
+.toast.success { border-left-color: var(--success); color: var(--success); }
+.toast.error { border-left-color: var(--danger); color: var(--danger); }
+.toast.warn { border-left-color: var(--warn); color: var(--warn); }
+.toast-enter-active, .toast-leave-active { transition: all .25s ease; }
+.toast-enter-from { opacity: 0; transform: translateY(-12px); }
+.toast-leave-to { opacity: 0; transform: translateY(-8px); }
 .bubble-chart .row { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
 .bubble-chart .bar-wrap { flex: 1; background: var(--hover); border-radius: 6px; height: 18px; overflow: hidden; }
 .bubble-chart .bar { height: 100%; background: var(--primary); border-radius: 6px; transition: width .4s ease; }
@@ -325,6 +334,7 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
           <div class="actions">
             <button class="btn sm fb-useful" @click="sendFeedback('useful')">👍 有用</button>
             <button class="btn sm fb-useless" @click="sendFeedback('useless')">👎 没用</button>
+            <button class="btn sm ghost" @click="copyText([c.answer, c.follow_ups ? '常见追问：' + c.follow_ups : '', c.star_hint ? 'STAR 要点：' + c.star_hint : ''].filter(Boolean).join('\n'))">📋 复制答案</button>
             <span class="ok-tip" v-if="feedbackDone[c.qa_id]">已记录</span>
           </div>
         </div>
@@ -333,6 +343,7 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
           <div class="head"><span class="q">🤖 模型生成回答</span><span class="score" style="color:var(--warn)">非题库答案</span></div>
           <div class="meta">三级检索均未命中 · 宽松模式下由大模型用自身知识回答，仅供参考</div>
           <div class="body" style="white-space:pre-wrap">{{ matchResult.free_answer }}</div>
+          <div class="actions"><button class="btn sm ghost" @click="copyText(matchResult.free_answer)">📋 复制回答</button></div>
         </div>
 
         <div v-if="matchResult.source==='new' && !matchResult.free_answer" class="empty-new">
@@ -745,6 +756,25 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
       </div>
     </div>
   </div>
+
+  <!-- 全局确认弹窗（替代原生 confirm） -->
+  <div v-if="confirmBox.open" class="modal-mask" style="z-index:60" @click.self="resolveConfirm(false)">
+    <div class="modal" style="max-width:400px;animation:pageIn .18s ease">
+      <h3 style="margin-bottom:10px">确认操作</h3>
+      <p style="margin:0 0 16px;color:var(--text);font-size:13.5px;line-height:1.7">{{ confirmBox.msg }}</p>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button class="btn ghost" @click="resolveConfirm(false)">取消</button>
+        <button class="btn danger" @click="resolveConfirm(true)">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 全局 toast 通知（替代原生 alert） -->
+  <div class="toast-wrap" aria-live="polite">
+    <transition-group name="toast">
+      <div v-for="t in toasts" :key="t.id" class="toast" :class="t.type">{{ t.msg }}</div>
+    </transition-group>
+  </div>
 </template>
 </div><!-- /#app -->
 
@@ -781,6 +811,8 @@ createApp({
       qaModal: false, qaForm: {},
       importModal: false, importText: '', importPreview: null, importResult: null, importing: false,
       fromLogModal: false, fromLogForm: {},
+      toasts: [], toastSeq: 0,
+      confirmBox: { open: false, msg: '', _resolve: null },
     };
   },
   computed: {
@@ -1054,7 +1086,7 @@ createApp({
         await this.api('PUT', '/api/settings', { values: this.settingsForm });
         this.settingsSaved = true;
         setTimeout(() => { this.settingsSaved = false; }, 2000);
-      } catch (e) { alert(e.message); } finally { this.settingsSaving = false; }
+      } catch (e) { this.showToast(e.message, 'error'); } finally { this.settingsSaving = false; }
     },
     async sendFeedback(fb) {
       await this.api('POST', `/api/log/${this.matchResult.log_id}/feedback`, { feedback: fb });
@@ -1100,7 +1132,7 @@ createApp({
       try {
         await this.api('POST', `/api/categories/${cat.id}/move?direction=${direction}`);
         await this.loadCategories();
-      } catch (e) { alert(e.message); }
+      } catch (e) { this.showToast(e.message, 'error'); }
     },
     // 拖动左栏右缘（= QA列表左边框）调整两栏宽度，240~640px，记忆到本地
     startResize(e) {
@@ -1127,13 +1159,13 @@ createApp({
       try { this.vectorStatus = await this.api('GET', '/api/vectors/status'); } catch (e) { /* 忽略 */ }
     },
     async rebuildVectors() {
-      if (!confirm('全量重建向量库？QA 数量多时会调用相应次数的 embedding API（通常几秒内完成）。')) return;
+      if (!(await this.askConfirm('全量重建向量库？QA 数量多时会调用相应次数的 embedding API（通常几秒内完成）。'))) return;
       this.rebuilding = true;
       try {
         const r = await this.api('POST', '/api/vectors/rebuild');
-        alert(`重建完成：共 ${r.total} 条向量`);
+        this.showToast(`重建完成：共 ${r.total} 条向量`, 'success');
         this.loadVectorStatus();
-      } catch (e) { alert('重建失败：' + e.message); } finally { this.rebuilding = false; }
+      } catch (e) { this.showToast('重建失败：' + e.message, 'error'); } finally { this.rebuilding = false; }
     },
     async loadQas() {
       if (!this.kbId) return;
@@ -1159,9 +1191,9 @@ createApp({
     openKbNew() { this.kbEditId = null; this.kbForm = { name: '', description: '', is_default: false }; this.kbModal = true; },
     openKbEdit(k) { this.kbEditId = k.id; this.kbForm = { name: k.name, description: k.description || '', is_default: !!k.is_default }; this.kbModal = true; },
     async delKb(k) {
-      if (confirm(`删除知识库「${k.name}」及其全部 ${k.qa_count} 题？不可恢复！`)) {
-        try { await this.api('DELETE', `/api/kbs/${k.id}`); await this.loadKbs(); this.kbId = this.kbs[0]?.id; }
-        catch (e) { alert(e.message); }
+      if (await this.askConfirm(`删除知识库「${k.name}」及其全部 ${k.qa_count} 题？不可恢复！`)) {
+        try { await this.api('DELETE', `/api/kbs/${k.id}`); await this.loadKbs(); this.kbId = this.kbs[0]?.id; this.showToast('知识库已删除', 'success'); }
+        catch (e) { this.showToast(e.message, 'error'); }
       }
     },
     async saveKb() {
@@ -1169,7 +1201,7 @@ createApp({
         if (this.kbEditId) await this.api('PUT', `/api/kbs/${this.kbEditId}`, this.kbForm);
         else await this.api('POST', '/api/kbs', this.kbForm);
         this.kbModal = false; await this.loadKbs();
-      } catch (e) { alert(e.message); }
+      } catch (e) { this.showToast(e.message, 'error'); }
     },
     openImport() { this.importModal = true; this.importPreview = null; this.importResult = null; },
     importExample() {
@@ -1210,7 +1242,7 @@ createApp({
         const r = await this.api('POST', '/api/qas/import-markdown', { kb_id: this.kbId, markdown: this.importText, dry_run: true });
         this.importPreview = { total: r.total, sections: r.sections, errors: r.errors };
         this.importResult = null;
-      } catch (e) { alert(e.message); }
+      } catch (e) { this.showToast(e.message, 'error'); }
     },
     async doImport() {
       this.importing = true;
@@ -1220,7 +1252,7 @@ createApp({
         await this.loadCategories();
         await this.loadTags();
         if (this.page === 'manage') await this.loadQas();
-      } catch (e) { alert(e.message); } finally { this.importing = false; }
+      } catch (e) { this.showToast(e.message, 'error'); } finally { this.importing = false; }
     },
     openIntentEdit(it) {
       this.intentForm = it
@@ -1236,11 +1268,11 @@ createApp({
         else await this.api('POST', '/api/intents', body);
         this.intentModal = false;
         await this.loadIntents();
-      } catch (e) { alert(e.message); }
+      } catch (e) { this.showToast(e.message, 'error'); }
     },
     async delIntent(it) {
-      if (confirm(`删除意图「${it.name}」？（QA 挂在知识库上，不受影响）`)) {
-        await this.api('DELETE', `/api/intents/${it.id}`); this.loadIntents();
+      if (await this.askConfirm(`删除意图「${it.name}」？（QA 挂在知识库上，不受影响）`)) {
+        await this.api('DELETE', `/api/intents/${it.id}`); this.showToast('意图已删除', 'success'); this.loadIntents();
       }
     },
     // ---- 分类 ----
@@ -1258,17 +1290,18 @@ createApp({
         this.catModal = false;
         await this.loadCategories();
         this.loadQas();
-      } catch (e) { alert(e.message); }
+      } catch (e) { this.showToast(e.message, 'error'); }
     },
     async delCat(cat) {
       const msg = cat.parent_id
         ? `删除子分类「${cat.name}」？其下 ${cat.qa_count} 题 QA 保留（分类置空）。`
         : `删除一级分类「${cat.name}」及其 ${(cat.children||[]).length} 个子分类？QA 全部保留（分类置空）。`;
-      if (confirm(msg)) {
+      if (await this.askConfirm(msg)) {
         await this.api('DELETE', `/api/categories/${cat.id}`);
         if (this.filterCategoryId === cat.id) this.filterCategoryId = 'all';
         await this.loadCategories();
         this.loadQas();
+        this.showToast('分类已删除', 'success');
       }
     },
     // ---- 标签 ----
@@ -1283,14 +1316,15 @@ createApp({
         this.tagModal = false;
         await this.loadTags();
         this.loadQas();
-      } catch (e) { alert(e.message); }
+      } catch (e) { this.showToast(e.message, 'error'); }
     },
     async delTag(tag) {
-      if (confirm(`删除标签「${tag.name}」？（只解除关联，QA 保留）`)) {
+      if (await this.askConfirm(`删除标签「${tag.name}」？（只解除关联，QA 保留）`)) {
         await this.api('DELETE', `/api/tags/${tag.id}`);
         if (this.filterTagId === tag.id) this.filterTagId = 'all';
         await this.loadTags();
         this.loadQas();
+        this.showToast('标签已删除', 'success');
       }
     },
     openQaEdit(qa) {
@@ -1337,17 +1371,46 @@ createApp({
         if (this.qaForm.id) await this.api('PUT', `/api/qas/${this.qaForm.id}`, body);
         else await this.api('POST', '/api/qas', body);
         this.qaModal = false; this.loadQas(); this.loadCategories(); this.loadTags();
-      } catch (e) { alert(e.message); }
+      } catch (e) { this.showToast(e.message, 'error'); }
     },
     async delRecord(r) {
       try {
         await this.api('DELETE', `/api/query_log/${r.id}`);
         this.confirmDelLog = null;
         await this.loadStats();  // 同步刷新顶部统计、Top10 和记录列表
-        alert(`已彻底删除记录「${r.question.slice(0, 30)}${r.question.length > 30 ? '…' : ''}」`);
-      } catch (e) { alert(e.message); }
+        this.showToast(`已彻底删除记录「${r.question.slice(0, 30)}${r.question.length > 30 ? '…' : ''}」`, 'success');
+      } catch (e) { this.showToast(e.message, 'error'); }
     },
-    async delQa(qa) { if (confirm(`删除 QA「${qa.question}」？`)) { await this.api('DELETE', `/api/qas/${qa.id}`); this.loadQas(); this.loadCategories(); this.loadTags(); } },
+    async delQa(qa) { if (await this.askConfirm(`删除 QA「${qa.question}」？`)) { await this.api('DELETE', `/api/qas/${qa.id}`); this.showToast('QA 已删除', 'success'); this.loadQas(); this.loadCategories(); this.loadTags(); } },
+    // ---- 全局提示 / 确认 / 复制（P0：替换原生 alert/confirm） ----
+    showToast(msg, type = 'info') {
+      const id = ++this.toastSeq;
+      this.toasts.push({ id, msg, type });
+      setTimeout(() => { this.toasts = this.toasts.filter(t => t.id !== id); }, 3000);
+    },
+    askConfirm(msg) {
+      return new Promise(resolve => { this.confirmBox = { open: true, msg, _resolve: resolve }; });
+    },
+    resolveConfirm(ok) {
+      this.confirmBox.open = false;
+      const r = this.confirmBox._resolve;
+      this.confirmBox._resolve = null;
+      if (r) r(ok);
+    },
+    async copyText(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        this.showToast('已复制到剪贴板', 'success');
+      } catch {
+        // 非 HTTPS / 无权限时降级为隐藏 textarea 方案
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); this.showToast('已复制到剪贴板', 'success'); }
+        catch { this.showToast('复制失败，请手动选择复制', 'error'); }
+        document.body.removeChild(ta);
+      }
+    },
   },
 }).mount('#app');
 </script>
