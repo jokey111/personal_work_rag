@@ -1025,11 +1025,25 @@ def stats_records(limit: int = 500):
 
 @app.delete("/api/query_log/{log_id}", dependencies=[Depends(auth_dep)])
 def delete_query_log(log_id: int):
-    """彻底删除一条历史提问记录（垃圾/无效数据清理）。"""
+    """彻底删除一条历史提问记录（垃圾/无效数据清理）。
+
+    真实命中（source='match'）的记录删除时同步回扣对应 QA 的 hit_count，
+    保证 Top10 榜和 QA 列表的"被问 N 次"与历史记录一致。
+    转正(converted)/模型回答(generated)的记录当初没有累加过 hit_count，不回扣。
+    """
+    conn = db.get_conn()
+    log = conn.execute("SELECT source, matched_qa_ids FROM query_log WHERE id=?", (log_id,)).fetchone()
+    if not log:
+        raise HTTPException(404, "记录不存在")
     with db.tx() as txn:
-        cur = txn.execute("DELETE FROM query_log WHERE id=?", (log_id,))
-        if cur.rowcount == 0:
-            raise HTTPException(404, "记录不存在")
+        if log["source"] == "match" and log["matched_qa_ids"]:
+            try:
+                ids = json.loads(log["matched_qa_ids"])
+            except (ValueError, TypeError):
+                ids = []
+            for qa_id in ids:
+                txn.execute("UPDATE qa SET hit_count = MAX(hit_count-1, 0) WHERE id=?", (qa_id,))
+        txn.execute("DELETE FROM query_log WHERE id=?", (log_id,))
     return {"ok": True}
 
 
