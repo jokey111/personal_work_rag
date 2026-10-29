@@ -38,31 +38,36 @@ def _hash(text: str) -> str:
 # ---------- embedding API ----------
 
 async def embed_async(texts: list[str]) -> list[list[float]]:
-    """批量异步调用 /embeddings；返回与 texts 等长的向量列表。"""
+    """批量异步调用 /embeddings；返回与 texts 等长的向量列表。
+
+    智谱单次 input 上限 64 条，超出自动分批串行调用。
+    """
     if not texts:
         return []
     if not config.LLM_API_KEY:
         raise EmbeddingError("LLM_API_KEY 未配置，无法调用 embedding")
-    payload = {
-        "model": config.EMBEDDING_MODEL,
-        "input": texts,
-    }
-    headers = {"Authorization": f"Bearer {config.LLM_API_KEY}"}
-    try:
-        async with httpx.AsyncClient(timeout=config.LLM_TIMEOUT_SECONDS) as client:
-            resp = await client.post(
-                f"{config.LLM_BASE_URL.rstrip('/')}/embeddings",
-                json=payload, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-        vecs = [item["embedding"] for item in sorted(data["data"], key=lambda x: x["index"])]
-        if len(vecs) != len(texts):
-            raise EmbeddingError(f"embedding 返回数量不符: {len(vecs)}/{len(texts)}")
-        return vecs
-    except httpx.HTTPStatusError as e:
-        raise EmbeddingError(f"embedding HTTP {e.response.status_code}: {e.response.text[:200]}") from e
-    except (httpx.HTTPError, KeyError, IndexError) as e:
-        raise EmbeddingError(f"embedding 调用失败: {e}") from e
+    BATCH = 32  # 留余量（官方上限 64，防超长文本触发 token 限制）
+    out: list[list[float]] = []
+    async with httpx.AsyncClient(timeout=config.LLM_TIMEOUT_SECONDS) as client:
+        for i in range(0, len(texts), BATCH):
+            batch = texts[i:i + BATCH]
+            payload = {"model": config.EMBEDDING_MODEL, "input": batch}
+            headers = {"Authorization": f"Bearer {config.LLM_API_KEY}"}
+            try:
+                resp = await client.post(
+                    f"{config.LLM_BASE_URL.rstrip('/')}/embeddings",
+                    json=payload, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+            except httpx.HTTPStatusError as e:
+                raise EmbeddingError(f"embedding HTTP {e.response.status_code}: {e.response.text[:200]}") from e
+            except (httpx.HTTPError, KeyError, IndexError) as e:
+                raise EmbeddingError(f"embedding 调用失败: {e}") from e
+            vecs = [item["embedding"] for item in sorted(data["data"], key=lambda x: x["index"])]
+            if len(vecs) != len(batch):
+                raise EmbeddingError(f"embedding 返回数量不符: {len(vecs)}/{len(batch)}")
+            out.extend(vecs)
+    return out
 
 
 # ---------- 内存向量库 ----------
