@@ -159,6 +159,13 @@ label.field span { display: block; margin-bottom: 5px; font-weight: 600; }
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border-soft); }
 th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
+/* QA 表格：列分隔线 + 列宽可拖动 */
+.qa-table { table-layout: fixed; }
+.qa-table th, .qa-table td { border-right: 1px solid var(--border-soft); overflow: hidden; }
+.qa-table th:last-child, .qa-table td:last-child { border-right: none; }
+.qa-table th { position: relative; user-select: none; }
+.col-grip { position: absolute; top: 0; right: -4px; width: 9px; height: 100%; cursor: col-resize; z-index: 2; }
+.col-grip:hover { background: linear-gradient(90deg, transparent, var(--primary-border)); }
 /* 题库管理：左栏（分类上 / 标签下），固定一屏高，两侧独立滚动 */
 .tree-col { position: sticky; top: 80px; align-self: start; height: calc(100vh - 104px); min-height: 420px; background: var(--card); border-radius: 14px; padding: 14px; box-shadow: var(--card-shadow); display: flex; flex-direction: column; gap: 12px; }
 .tree-half { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -334,7 +341,7 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
           <span style="font-size:12px;color:var(--text-3)">全知识库检索</span>
         </div>
         <div class="ask-box">
-          <textarea v-model="question" placeholder="例如：你的项目里检索不准是怎么优化的？"></textarea>
+          <textarea v-model="question" placeholder="例如：你的项目里检索不准是怎么优化的？" @keydown.enter.exact.prevent="doMatch" title="Enter 直接匹配，Shift+Enter 换行"></textarea>
         </div>
         <div style="display:flex;gap:10px;align-items:center;margin-top:10px">
           <label style="font-size:12.5px;color:var(--text-2);display:flex;align-items:center;gap:6px">
@@ -479,8 +486,15 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
             <button class="btn sm" @click="openQaEdit(null)">＋ 新增QA</button>
           </div>
         </div>
-        <table>
-          <thead><tr><th style="width:26px"></th><th>问题</th><th>分类</th><th>标签</th><th>被问</th><th>操作</th></tr></thead>
+        <table class="qa-table">
+          <thead><tr>
+            <th :style="colStyle(0)" style="width:26px"><span class="col-grip" @mousedown="startColResize($event,0)"></span></th>
+            <th :style="colStyle(1)"><span class="col-grip" @mousedown="startColResize($event,1)"></span>问题</th>
+            <th :style="colStyle(2)"><span class="col-grip" @mousedown="startColResize($event,2)"></span>分类</th>
+            <th :style="colStyle(3)"><span class="col-grip" @mousedown="startColResize($event,3)"></span>标签</th>
+            <th :style="colStyle(4)"><span class="col-grip" @mousedown="startColResize($event,4)"></span>被问</th>
+            <th :style="colStyle(5)"><span class="col-grip" @mousedown="startColResize($event,5)"></span>操作</th>
+          </tr></thead>
           <tbody>
             <template v-for="qa in qas" :key="qa.id">
               <tr>
@@ -787,6 +801,7 @@ createApp({
       categories: [], expandedCats: {}, filterCategoryId: 'all', catsByKb: {},
       tags: [], filterTagId: 'all',
       qas: [], keyword: '',
+      qaColWidths: (() => { try { return JSON.parse(localStorage.getItem('qaColWidths')) || []; } catch { return []; } })(),
       leftWidth: parseInt(localStorage.getItem('manageLeftWidth')) || 300, resizing: false,
       catFlex: parseFloat(localStorage.getItem('catFlex')) || 6,
       tagFlex: parseFloat(localStorage.getItem('tagFlex')) || 4,
@@ -1359,6 +1374,27 @@ createApp({
       } catch (e) { this.showToast(e.message, 'error'); }
     },
     async delQa(qa) { if (await this.askConfirm(`删除 QA「${qa.question}」？`)) { await this.api('DELETE', `/api/qas/${qa.id}`); this.showToast('QA 已删除', 'success'); this.loadQas(); this.loadCategories(); this.loadTags(); } },
+    // ---- QA 表格列宽拖拽 ----
+    colStyle(i) { return this.qaColWidths[i] ? { width: this.qaColWidths[i] + 'px' } : null; },
+    startColResize(e, idx) {
+      e.preventDefault(); e.stopPropagation();
+      const th = e.currentTarget.parentElement;
+      const table = th.closest('table');
+      const ths = [...table.querySelectorAll('th')];
+      const startX = e.clientX, startW = th.getBoundingClientRect().width;
+      const move = (ev) => {
+        const w = Math.max(36, startW + ev.clientX - startX);
+        th.style.width = w + 'px';
+      };
+      const up = () => {
+        this.qaColWidths = ths.map(t => Math.round(t.getBoundingClientRect().width));
+        localStorage.setItem('qaColWidths', JSON.stringify(this.qaColWidths));
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+      };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    },
     // ---- 全局提示 / 确认 / 复制（P0：替换原生 alert/confirm） ----
     showToast(msg, type = 'info') {
       const id = ++this.toastSeq;
