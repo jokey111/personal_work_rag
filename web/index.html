@@ -467,6 +467,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
               <td style="max-width:380px">{{ r.question }}</td>
               <td style="white-space:nowrap;font-size:12.5px">
                 <span v-if="r.source==='match'" style="color:#16a34a" :title="r.matched_question || ''">✓ 命中</span>
+                <span v-else-if="r.source==='converted'" style="color:#6366f1" :title="'已转正为 QA：' + (r.matched_question || '')">✔ 已转QA</span>
                 <span v-else-if="r.source==='generated'" style="color:#d97706">🤖 模型回答</span>
                 <span v-else style="color:#ea580c">✗ 未命中</span>
               </td>
@@ -1207,10 +1208,14 @@ createApp({
       try {
         const body = { kb_id: this.qaForm.kb_id, category_id: this.qaForm.category_id, tag_ids: this.qaForm.tag_ids || [], question: this.qaForm.question, question_aliases: this.joinAliases(this.qaForm.aliasRows), answer: this.qaForm.answer };
         if (this.qaForm.id) await this.api('PUT', `/api/qas/${this.qaForm.id}`, body);
-        else if (this.qaForm._fromLog) await this.api('POST', `/api/qas/from_log/${this.qaForm._fromLog}`, body);
+        else if (this.qaForm._fromLog) {
+          await this.api('POST', `/api/qas/from_log/${this.qaForm._fromLog}`, body);
+          // 转正只改该记录自身状态为"已转QA"，不刷新统计指标（转正不算命中）
+          const rec = this.records.find(x => x.id === this.qaForm._fromLog);
+          if (rec) { rec.source = 'converted'; rec.matched_question = body.question; }
+        }
         else await this.api('POST', '/api/qas', body);
         this.qaModal = false; this.loadQas(); this.loadCategories(); this.loadTags();
-        if (this.page === 'stats') this.loadStats();
       } catch (e) { alert(e.message); }
     },
     recordToQa(r) {

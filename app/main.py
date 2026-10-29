@@ -840,7 +840,7 @@ async def _run_match(body: MatchIn, emit) -> dict:
                       "confidence": 0.0, "degraded": False,
                       "reason": "三级检索均未命中"}
 
-    source = "match" if hit_ids else "new"
+    source = "match" if hit_ids else ("generated" if free_text else "new")
     with db.tx() as txn:
         cur = txn.execute(
             "INSERT INTO query_log(kb_id, question, intent_id, route_confidence, matched_qa_ids, source) "
@@ -1057,8 +1057,9 @@ def qa_from_log(log_id: int, body: FromLogIn):
         answer=body.answer,
     )
     result = create_qa(qa_in)
+    # 标记为 converted（不计入命中/未命中统计，只作转正痕迹；Top10 按 qa.hit_count 统计也不受影响）
     with db.tx() as txn:
-        txn.execute("UPDATE query_log SET source='match', matched_qa_ids=? WHERE id=?",
+        txn.execute("UPDATE query_log SET source='converted', matched_qa_ids=? WHERE id=?",
                     (json.dumps([result["id"]]), log_id))
     return result
 
