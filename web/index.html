@@ -69,7 +69,13 @@
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--text); transition: background .25s ease, color .25s ease; }
+body { font-family: var(--font-base, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif); background: var(--bg); color: var(--text); transition: background .25s ease, color .25s ease; }
+/* 字体方案：纯系统字体栈，无网络依赖，缺字体自动回退 */
+:root { --font-base: -apple-system, "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei", sans-serif; }
+html[data-font="heiti"] { --font-base: "HarmonyOS Sans SC", "MiSans", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC", sans-serif; }
+html[data-font="songti"] { --font-base: Georgia, "Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, serif; }
+html[data-font="kaiti"]  { --font-base: "Kaiti SC", STKaiti, KaiTi, 楷体, "Noto Serif SC", serif; }
+html[data-font="yuan"]   { --font-base: "Yuanti SC", "YouYuan", 幼圆, "Varela Round", "Microsoft YaHei", sans-serif; }
 .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; }
 .login-card { background: var(--card); padding: 36px 40px; border-radius: 16px; box-shadow: 0 8px 30px rgba(15,23,42,.08); width: 360px; }
 .login-card h2 { font-size: 20px; margin-bottom: 6px; }
@@ -230,6 +236,7 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
   .stat-grid { grid-template-columns: repeat(2, 1fr); }
   .stat .num { font-size: 20px; }
   .nav { padding: 0 10px; gap: 2px; }
+  .nav .font-select { display: none; }  /* 小屏隐藏字体切换，保留主题切换 */
   .nav .brand { font-size: 13px; margin-right: 8px; }
   .nav button.page-btn { padding: 8px 9px; font-size: 13px; }
   th, td { padding: 7px 8px; font-size: 12.5px; }
@@ -270,6 +277,13 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
       <option value="sakura">🌸 樱粉</option>
       <option value="cream">🍮 奶杏</option>
       <option value="dark">🌙 夜读</option>
+    </select>
+    <select class="theme-select font-select" :value="font" @change="setFont($event.target.value)" title="切换字体风格">
+      <option value="system">✒️ 默认字体</option>
+      <option value="heiti">🅰 现代黑体</option>
+      <option value="songti">📰 宋体阅读</option>
+      <option value="kaiti">🖌 楷体温润</option>
+      <option value="yuan">🫧 圆润可爱</option>
     </select>
     <button class="logout" @click="logout">退出</button>
   </div>
@@ -786,6 +800,7 @@ createApp({
     return {
       token: localStorage.getItem('token') || '',
       theme: localStorage.getItem('uiTheme') || 'slate',
+      font: localStorage.getItem('uiFont') || 'system',
       loginForm: { username: '', password: '' }, loginErr: '', loggingIn: false,
       page: 'match',
       kbs: [], kbId: null,
@@ -876,11 +891,13 @@ createApp({
   },
   async mounted() {
     document.documentElement.dataset.theme = this.theme;  // 恢复上次主题
+    document.documentElement.dataset.font = this.font;    // 恢复上次字体
     window.addEventListener('hashchange', this.onHashChange);
     if (this.token) { await this.initData(); this.onHashChange(); }  // 登录态下恢复上次页面
   },
   methods: {
     setTheme(t) { this.theme = t; localStorage.setItem('uiTheme', t); document.documentElement.dataset.theme = t; },
+    setFont(f) { this.font = f; localStorage.setItem('uiFont', f); document.documentElement.dataset.font = f; },
     onHashChange() {
       if (!this.token) return;
       const p = (location.hash || '').replace(/^#\//, '');
