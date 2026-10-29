@@ -123,7 +123,7 @@ html[data-font="yuan"]   { --font-base: "Yuanti SC", "YouYuan", 幼圆, "Varela 
 label.field { display: block; font-size: 13px; color: var(--text-2); margin-bottom: 12px; }
 label.field span { display: block; margin-bottom: 5px; font-weight: 600; }
 .ask-box { display: flex; gap: 10px; margin-top: 4px; }
-.ask-box textarea { flex: 1; resize: vertical; min-height: 64px; }
+.ask-box textarea { flex: 1; resize: vertical; min-height: 192px; }
 .route-chain { background: var(--primary-soft); border: 1px solid var(--primary-border); color: var(--primary-text); border-radius: 10px; padding: 10px 14px; font-size: 13.5px; margin: 14px 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .route-chain .degraded { color: var(--warn); background: var(--warn-bg); border-radius: 6px; padding: 1px 8px; font-size: 12px; }
 .candidate { border: 1px solid var(--border-soft); border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; transition: border-color .15s ease, box-shadow .15s ease; }
@@ -159,10 +159,11 @@ label.field span { display: block; margin-bottom: 5px; font-weight: 600; }
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border-soft); }
 th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
-/* QA 表格：列分隔线 + 列宽可拖动 */
+/* QA 表格：仅表头有列分隔线 + 列宽可拖动 */
 .qa-table { table-layout: fixed; }
-.qa-table th, .qa-table td { border-right: 1px solid var(--border-soft); overflow: hidden; }
-.qa-table th:last-child, .qa-table td:last-child { border-right: none; }
+.qa-table th { border-right: 1px solid var(--border); }
+.qa-table th:last-child { border-right: none; }
+.qa-table td { overflow: hidden; }
 .qa-table th { position: relative; user-select: none; }
 .col-grip { position: absolute; top: 0; right: -4px; width: 9px; height: 100%; cursor: col-resize; z-index: 2; }
 .col-grip:hover { background: linear-gradient(90deg, transparent, var(--primary-border)); }
@@ -486,11 +487,11 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
           <h3>QA 列表 <span class="filter-desc">{{ qaFilterDesc }}</span></h3>
           <div class="btn-group">
             <div class="search-box">
-              <input class="input" style="width:180px" placeholder="🔍 关键词" v-model="keyword" @keyup.enter="loadQas()">
+              <input class="input" style="width:180px;height:32px;padding:4px 28px 4px 10px;font-size:13px" placeholder="🔍 关键词" v-model="keyword" @keyup.enter="loadQas()">
               <button v-if="keyword" class="search-clear" @click="keyword=''; loadQas()" title="清空关键词">×</button>
             </div>
-            <button class="btn sm ghost" @click="openImport">📥 批量导入</button>
-            <button class="btn sm" @click="openQaEdit(null)">＋ 新增QA</button>
+            <button class="btn sm ghost" style="height:32px" @click="openImport">📥 批量导入</button>
+            <button class="btn sm" style="height:32px" @click="openQaEdit(null)">＋ 新增QA</button>
           </div>
         </div>
         <table class="qa-table">
