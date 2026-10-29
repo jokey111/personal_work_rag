@@ -1226,7 +1226,8 @@ createApp({
       try {
         await this.api('DELETE', `/api/query_log/${r.id}`);
         this.confirmDelLog = null;
-        this.records = this.records.filter(x => x.id !== r.id);
+        await this.loadStats();  // 同步刷新顶部统计、Top10 和记录列表
+        alert(`已彻底删除记录「${r.question.slice(0, 30)}${r.question.length > 30 ? '…' : ''}」`);
       } catch (e) { alert(e.message); }
     },
     async delQa(qa) { if (confirm(`删除 QA「${qa.question}」？`)) { await this.api('DELETE', `/api/qas/${qa.id}`); this.loadQas(); this.loadCategories(); this.loadTags(); } },
