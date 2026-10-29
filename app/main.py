@@ -316,6 +316,34 @@ def delete_category(cat_id: int):
     return {"ok": True}
 
 
+@app.post("/api/categories/{cat_id}/move", dependencies=[Depends(auth_dep)])
+def move_category(cat_id: int, direction: str):
+    """同级内上移/下移（direction: up/down），交换 sort_order 并归一化。"""
+    if direction not in ("up", "down"):
+        raise HTTPException(400, "direction 只能是 up 或 down")
+    conn = db.get_conn()
+    row = conn.execute("SELECT * FROM category WHERE id=?", (cat_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "分类不存在")
+    # 同级按当前排序规则取邻居
+    siblings = conn.execute(
+        "SELECT id FROM category WHERE kb_id=? AND parent_id IS ? "
+        "ORDER BY sort_order, id",
+        (row["kb_id"], row["parent_id"])).fetchall()
+    ids = [r["id"] for r in siblings]
+    idx = ids.index(cat_id)
+    swap_idx = idx - 1 if direction == "up" else idx + 1
+    if swap_idx < 0 or swap_idx >= len(ids):
+        return {"ok": True, "moved": False}  # 已在边界
+    with db.tx() as txn:
+        # 归一化同级 sort_order = 数组下标，再交换目标与邻居
+        for i, cid in enumerate(ids):
+            txn.execute("UPDATE category SET sort_order=? WHERE id=?", (i, cid))
+        txn.execute("UPDATE category SET sort_order=? WHERE id=?", (idx, ids[swap_idx]))
+        txn.execute("UPDATE category SET sort_order=? WHERE id=?", (swap_idx, cat_id))
+    return {"ok": True, "moved": True}
+
+
 # ---------- 标签（扁平，QA 元数据，全局） ----------
 class TagIn(BaseModel):
     name: str
@@ -894,21 +922,23 @@ def feedback(log_id: int, body: FeedbackIn):
     return {"ok": True}
 
 
-# ---------- 复盘统计 ----------
+# ---------- 复盘统计（全局：跨知识库聚合） ----------
 @app.get("/api/stats/overview", dependencies=[Depends(auth_dep)])
-def stats_overview(kb_id: int):
+def stats_overview(kb_id: int | None = None):
     conn = db.get_conn()
+    where, args = ("WHERE kb_id=? AND status='active'", [kb_id]) if kb_id else ("WHERE status='active'", [])
     total = conn.execute(
-        "SELECT COUNT(*) AS c FROM qa WHERE kb_id=? AND status='active'", (kb_id,)).fetchone()["c"]
-    logs = conn.execute("SELECT source FROM query_log WHERE kb_id=?", (kb_id,)).fetchall()
+        f"SELECT COUNT(*) AS c FROM qa {where}", args).fetchone()["c"]
+    lwhere, largs = ("WHERE kb_id=?", [kb_id]) if kb_id else ("", [])
+    logs = conn.execute(f"SELECT source FROM query_log {lwhere}", largs).fetchall()
     hit = sum(1 for r in logs if r["source"] == "match")
     new = sum(1 for r in logs if r["source"] == "new")
     # 近 14 天命中趋势
     trend = []
     for r in conn.execute(
         "SELECT date(created_at) AS d, SUM(CASE WHEN source='match' THEN 1 ELSE 0 END) AS hit, "
-        "COUNT(*) AS total FROM query_log WHERE kb_id=? GROUP BY date(created_at) "
-        "ORDER BY d DESC LIMIT 14", (kb_id,)).fetchall():
+        f"COUNT(*) AS total FROM query_log {lwhere} GROUP BY date(created_at) "
+        "ORDER BY d DESC LIMIT 14", largs).fetchall():
         trend.append({"date": r["d"], "hit": r["hit"], "total": r["total"]})
     trend.reverse()
     return {"qa_total": total, "query_total": len(logs), "hit": hit, "new": new,
@@ -916,13 +946,50 @@ def stats_overview(kb_id: int):
 
 
 @app.get("/api/stats/hot", dependencies=[Depends(auth_dep)])
-def stats_hot(kb_id: int):
+def stats_hot(kb_id: int | None = None):
+    conn = db.get_conn()
+    where, args = ("WHERE kb_id=? AND status='active' AND hit_count>0", [kb_id]) \
+        if kb_id else ("WHERE status='active' AND hit_count>0", [])
+    rows = conn.execute(
+        f"SELECT id, question, hit_count, quality FROM qa {where} "
+        "ORDER BY hit_count DESC LIMIT 10", args).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.get("/api/stats/top_categories", dependencies=[Depends(auth_dep)])
+def stats_top_categories():
+    """Top10 知识库-一级分类（按 QA 累计被问次数）。"""
     conn = db.get_conn()
     rows = conn.execute(
-        "SELECT id, question, hit_count, quality FROM qa "
-        "WHERE kb_id=? AND status='active' AND hit_count>0 "
-        "ORDER BY hit_count DESC LIMIT 10", (kb_id,)).fetchall()
-    return [dict(r) for r in rows]
+        "SELECT kb.name AS kb_name, c.name AS category_name, "
+        "SUM(qa.hit_count) AS hits, COUNT(qa.id) AS qa_count "
+        "FROM qa JOIN kb ON qa.kb_id=kb.id "
+        "LEFT JOIN category c ON qa.category_id=c.id "
+        "LEFT JOIN category pc ON c.parent_id=pc.id "
+        "WHERE qa.status='active' "
+        "GROUP BY kb.name, COALESCE(pc.name, c.name) "
+        "HAVING SUM(qa.hit_count) > 0 "
+        "ORDER BY hits DESC LIMIT 10").fetchall()
+    return [{"kb_name": r["kb_name"],
+             "category_name": r["category_name"] or "（未分类）",
+             "hits": r["hits"], "qa_count": r["qa_count"]} for r in rows]
+
+
+@app.get("/api/stats/top_tags", dependencies=[Depends(auth_dep)])
+def stats_top_tags():
+    """Top10 知识库-标签（按 QA 累计被问次数）。"""
+    conn = db.get_conn()
+    rows = conn.execute(
+        "SELECT kb.name AS kb_name, t.name AS tag_name, "
+        "SUM(qa.hit_count) AS hits, COUNT(DISTINCT qa.id) AS qa_count "
+        "FROM qa_tag qt JOIN qa ON qt.qa_id=qa.id AND qa.status='active' "
+        "JOIN tag t ON qt.tag_id=t.id "
+        "JOIN kb ON qa.kb_id=kb.id "
+        "GROUP BY kb.name, t.name "
+        "HAVING SUM(qa.hit_count) > 0 "
+        "ORDER BY hits DESC LIMIT 10").fetchall()
+    return [{"kb_name": r["kb_name"], "tag_name": r["tag_name"],
+             "hits": r["hits"], "qa_count": r["qa_count"]} for r in rows]
 
 
 @app.get("/api/stats/unmatched", dependencies=[Depends(auth_dep)])

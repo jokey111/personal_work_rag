@@ -70,9 +70,16 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
 /* 题库管理：左栏（分类上 / 标签下），固定一屏高，两侧独立滚动 */
 .tree-col { position: sticky; top: 80px; align-self: start; height: calc(100vh - 104px); min-height: 420px; background: #fff; border-radius: 14px; padding: 14px; box-shadow: 0 2px 10px rgba(15,23,42,.05); display: flex; flex-direction: column; gap: 12px; }
 .tree-half { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-/* 分类:标签 = 6:4 */
+/* 分类:标签 默认 6:4，可拖拽行分隔条调整 */
 .tree-half.cat-half { flex: 6; }
 .tree-half.tag-half { flex: 4; }
+/* 分类/标签之间的水平拖拽条 */
+.row-resizer { height: 10px; margin: -6px -4px; cursor: row-resize; z-index: 5; border-radius: 6px; position: relative; flex-shrink: 0; }
+.row-resizer::after { content: ''; position: absolute; left: 30%; right: 30%; top: 4.5px; height: 2px; border-radius: 2px; background: #cbd5e1; }
+.row-resizer:hover::after, .row-resizer.dragging::after { background: #6366f1; }
+.icon-btn.tiny { font-size: 9px; padding: 1px 3px; color:#94a3b8; }
+.icon-btn.tiny:hover:not(:disabled) { color:#4f46e5; }
+.icon-btn.tiny:disabled { opacity: .25; cursor: default; }
 .tree-half .section-title { margin-bottom: 6px; }
 .tree-scroll { flex: 1; min-height: 0; overflow-y: auto; padding-right: 2px; }
 /* 左栏右缘拖拽调宽手柄（= QA列表左侧边框） */
@@ -156,7 +163,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
     <button class="page-btn" :class="{active: page==='stats'}" @click="goStats">复盘统计</button>
     <button class="page-btn" :class="{active: page==='settings'}" @click="goSettings">⚙ 设置</button>
     <span class="spacer"></span>
-    <select class="kb-select" v-model="kbId" @change="onKbSwitch">
+    <select v-if="page==='manage'" class="kb-select" v-model="kbId" @change="onKbSwitch">
       <option v-for="k in kbs" :key="k.id" :value="k.id">{{ k.name }}（{{ k.qa_count }}题）</option>
     </select>
     <button class="logout" @click="logout">退出</button>
@@ -168,7 +175,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
       <div class="card">
         <div class="section-title"><h3>面试官问了你什么？</h3>
           <span style="flex:1"></span>
-          <span style="font-size:12px;color:#94a3b8">当前库：{{ currentKb?.name }}</span>
+          <span style="font-size:12px;color:#94a3b8">全知识库检索</span>
         </div>
         <div class="ask-box">
           <textarea v-model="question" placeholder="输入面试官的原话，例如：你的项目里检索不准是怎么优化的？"></textarea>
@@ -233,7 +240,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
         </div>
 
         <div v-if="matchResult.source==='new' && !matchResult.free_answer" class="empty-new">
-          <div>题库还没有覆盖这个问题，已记录到<b>新问题池</b>（复盘统计页可一键转正为 QA）。</div>
+          <div>题库还没有覆盖这个问题，已记录到<b>查询日志</b>。</div>
           <div style="font-size:12px;margin-top:6px;color:#b45309" v-html="noMatchReason"></div>
         </div>
 
@@ -248,7 +255,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
     <div v-if="page==='manage'" class="manage-grid" :style="{gridTemplateColumns: leftWidth + 'px 1fr'}">
       <div class="tree-col">
         <div class="col-resizer" :class="{dragging: resizing}" @mousedown="startResize" title="左右拖动调整宽度"></div>
-        <div class="tree-half cat-half">
+        <div class="tree-half cat-half" :style="{flex: catFlex}">
           <div class="section-title"><h3>分类</h3><button class="btn sm ghost" @click="openCatEdit(null, null)">＋分类</button></div>
           <div class="tree-scroll">
             <div class="l1-item" :class="{active: filterCategoryId==='all'}" @click="filterCategoryId='all';loadQas()">
@@ -263,7 +270,11 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
                 <button class="icon-btn" @click.stop="delCat(c)">🗑</button>
               </div>
               <div v-show="expandedCats[c.id]">
-                <div v-for="child in (c.children || [])" :key="child.id" class="l2-item" :class="{active: filterCategoryId===child.id}" @click="filterCategoryId=child.id;loadQas()">
+                <div v-for="(child, ci) in (c.children || [])" :key="child.id" class="l2-item" :class="{active: filterCategoryId===child.id}" @click="filterCategoryId=child.id;loadQas()">
+                  <span style="display:flex;align-items:center;gap:1px;flex-shrink:0">
+                    <button class="icon-btn tiny" :disabled="ci===0" @click.stop="moveCat(child,'up')" title="上移">▲</button>
+                    <button class="icon-btn tiny" :disabled="ci===(c.children||[]).length-1" @click.stop="moveCat(child,'down')" title="下移">▼</button>
+                  </span>
                   <span class="cat-name" :title="child.name">{{ child.name }}</span>
                   <span style="display:flex;gap:2px;align-items:center;flex-shrink:0">
                     <span class="cnt">{{ child.qa_count }}题</span>
@@ -278,7 +289,9 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
           </div>
         </div>
 
-        <div class="tree-half tag-half">
+        <div class="row-resizer" :class="{dragging: resizingRow}" @mousedown="startRowResize" title="上下拖动调整分类/标签占比"></div>
+
+        <div class="tree-half tag-half" :style="{flex: tagFlex}">
           <div class="section-title"><h3>标签</h3><button class="btn sm ghost" @click="openTagEdit(null)">＋标签</button></div>
           <div class="tree-scroll">
             <div class="l2-item" :class="{active: filterTagId==='all'}" style="padding-left:8px" @click="filterTagId='all';loadQas()">
@@ -309,22 +322,29 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
           </div>
         </div>
         <table>
-          <thead><tr><th>问题</th><th>分类</th><th>标签</th><th>被问</th><th>操作</th></tr></thead>
+          <thead><tr><th style="width:26px"></th><th>问题</th><th>分类</th><th>标签</th><th>被问</th><th>操作</th></tr></thead>
           <tbody>
-            <tr v-for="qa in qas" :key="qa.id">
-              <td style="max-width:280px">{{ qa.question }}</td>
-              <td style="white-space:nowrap;font-size:12.5px">{{ qa.category_l1 ? (qa.category_l2 ? qa.category_l2 : qa.category_l1) : '—' }}</td>
-              <td style="max-width:160px">
-                <span v-for="t in qa.tags" :key="t.id" class="tag-chip mini">{{ t.name }}</span>
-                <span v-if="!qa.tags?.length" style="color:#cbd5e1">—</span>
-              </td>
-              <td>{{ qa.hit_count }}</td>
-              <td style="white-space:nowrap">
-                <button class="icon-btn" @click="openQaEdit(qa)">✏️</button>
-                <button class="icon-btn" @click="delQa(qa)">🗑</button>
-              </td>
-            </tr>
-            <tr v-if="!qas.length"><td colspan="5" style="color:#94a3b8;text-align:center;padding:24px">当前筛选条件下暂无 QA，点击右上角新增或批量导入</td></tr>
+            <template v-for="qa in qas" :key="qa.id">
+              <tr>
+                <td style="text-align:center"><button class="icon-btn" @click="expandedQas[qa.id]=!expandedQas[qa.id]" :title="expandedQas[qa.id]?'收起答案':'展开答案'">{{ expandedQas[qa.id] ? '▾' : '▸' }}</button></td>
+                <td style="max-width:280px">{{ qa.question }}</td>
+                <td style="white-space:nowrap;font-size:12.5px">{{ qa.category_l1 ? (qa.category_l2 ? qa.category_l2 : qa.category_l1) : '—' }}</td>
+                <td style="max-width:160px">
+                  <span v-for="t in qa.tags" :key="t.id" class="tag-chip mini">{{ t.name }}</span>
+                  <span v-if="!qa.tags?.length" style="color:#cbd5e1">—</span>
+                </td>
+                <td>{{ qa.hit_count }}</td>
+                <td style="white-space:nowrap">
+                  <button class="icon-btn" @click="openQaEdit(qa)">✏️</button>
+                  <button class="icon-btn" @click="delQa(qa)">🗑</button>
+                </td>
+              </tr>
+              <tr v-if="expandedQas[qa.id]" style="background:#f8fafc">
+                <td></td>
+                <td colspan="5" style="padding:8px 12px;white-space:pre-wrap;font-size:12.5px;color:#334155;border-left:3px solid #6366f1">{{ qa.answer || '（无答案）' }}</td>
+              </tr>
+            </template>
+            <tr v-if="!qas.length"><td colspan="6" style="color:#94a3b8;text-align:center;padding:24px">当前筛选条件下暂无 QA，点击右上角新增或批量导入</td></tr>
           </tbody>
         </table>
       </div>
@@ -417,31 +437,25 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
         <div class="stat"><div class="num">{{ overview.hit_rate==null ? '—' : (overview.hit_rate*100).toFixed(0)+'%' }}</div><div class="lbl">命中率</div></div>
       </div>
       <div class="card bubble-chart">
-        <div class="section-title"><h3>🔥 高频 Top10（面试重点风向标）</h3></div>
-        <div v-for="h in hot" :key="h.id" class="row">
-          <span style="width:44px;font-size:12px;color:#6366f1;font-weight:700">{{ h.hit_count }}次</span>
-          <div class="bar-wrap"><div class="bar" :style="{width: (h.hit_count / hot[0].hit_count * 100) + '%'}"></div></div>
-          <span style="width:46%;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ h.question }}</span>
+        <div class="section-title"><h3>🏆 Top10 知识库-分类（按累计被问）</h3></div>
+        <div v-for="(h, i) in topCategories" :key="i" class="row">
+          <span style="width:52px;font-size:12px;color:#6366f1;font-weight:700">{{ h.hits }}次</span>
+          <div class="bar-wrap"><div class="bar" :style="{width: (h.hits / topCategories[0].hits * 100) + '%'}"></div></div>
+          <span style="width:42%;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ h.kb_name }} › {{ h.category_name }}（{{ h.qa_count }}题）</span>
         </div>
-        <div v-if="!hot.length" style="color:#94a3b8;font-size:13px">还没有命中记录，去匹配页试一次</div>
+        <div v-if="!topCategories.length" style="color:#94a3b8;font-size:13px">还没有被问记录</div>
       </div>
-      <div class="card">
-        <div class="section-title"><h3>🆕 新问题池（未命中，待转正）</h3></div>
-        <table>
-          <thead><tr><th>问题原话</th><th>时间</th><th>操作</th></tr></thead>
-          <tbody>
-            <tr v-for="u in unmatched" :key="u.id">
-              <td>{{ u.question }}</td>
-              <td style="white-space:nowrap;color:#94a3b8;font-size:12.5px">{{ u.created_at }}</td>
-              <td><button class="btn sm" @click="openFromLog(u)">转正为 QA</button></td>
-            </tr>
-            <tr v-if="!unmatched.length"><td colspan="3" style="color:#94a3b8;text-align:center;padding:20px">池子是空的，覆盖率 100% 🎉</td></tr>
-          </tbody>
-        </table>
+      <div class="card bubble-chart">
+        <div class="section-title"><h3>🏷 Top10 知识库-标签（按累计被问）</h3></div>
+        <div v-for="(h, i) in topTags" :key="i" class="row">
+          <span style="width:52px;font-size:12px;color:#6366f1;font-weight:700">{{ h.hits }}次</span>
+          <div class="bar-wrap"><div class="bar" :style="{width: (h.hits / topTags[0].hits * 100) + '%'}"></div></div>
+          <span style="width:42%;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ h.kb_name }} › #{{ h.tag_name }}（{{ h.qa_count }}题）</span>
+        </div>
+        <div v-if="!topTags.length" style="color:#94a3b8;font-size:13px">还没有被问记录</div>
       </div>
     </div>
-  </div>
-  </template>
+  </div><!-- /container -->
 
   <!-- 新建知识库 -->
   <div v-if="kbModal" class="modal-mask" @click.self="kbModal=false">
@@ -521,7 +535,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
             <option v-for="k in kbs" :key="k.id" :value="k.id">{{ k.name }}</option>
           </select>
         </label>
-        <label class="field"><span>分类</span>
+        <label class="field"><span>分类（跟随左侧选中：{{ qaFormCategoryLabel || '未分类' }}）</span>
           <select class="input" v-model="qaForm.category_id">
             <option :value="null">（未分类）</option>
             <option v-for="o in catOptions(qaForm.kb_id)" :key="o.id" :value="o.id">{{ o.label }}</option>
@@ -590,51 +604,8 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
       </div>
     </div>
   </div>
-
-  <!-- 新问题转正抽屉 -->
-  <div v-if="fromLogModal" class="drawer-mask" @click.self="fromLogModal=false">
-    <div class="drawer">
-      <h3>新问题转正为 QA</h3>
-      <p style="font-size:13px;color:#64748b;margin-bottom:14px">原话：{{ fromLogForm._original }}</p>
-      <label class="field"><span>标准化问题（默认用原话，可改写）</span><input class="input" v-model="fromLogForm.question"></label>
-      <div class="form-grid">
-        <label class="field"><span>归入知识库</span>
-          <select class="input" v-model="fromLogForm.kb_id" @change="onFromLogKbChange">
-            <option v-for="k in kbs" :key="k.id" :value="k.id">{{ k.name }}</option>
-          </select>
-        </label>
-        <label class="field"><span>分类</span>
-          <select class="input" v-model="fromLogForm.category_id">
-            <option :value="null">（未分类）</option>
-            <option v-for="o in catOptions(fromLogForm.kb_id)" :key="o.id" :value="o.id">{{ o.label }}</option>
-          </select>
-        </label>
-      </div>
-      <label class="field"><span>标签（可多选）</span>
-        <div class="tag-select">
-          <label v-for="t in tags" :key="t.id" class="tag-check" :class="{on: fromLogForm.tag_ids.includes(t.id)}">
-            <input type="checkbox" :value="t.id" v-model="fromLogForm.tag_ids"> {{ t.name }}
-          </label>
-        </div>
-      </label>
-      <label class="field"><span>答案 *</span><textarea class="input" rows="6" v-model="fromLogForm.answer"></textarea></label>
-      <label class="field"><span>变体问法（一行一个）</span>
-        <div class="alias-rows">
-          <div v-for="(a, i) in fromLogForm.aliasRows" :key="i" class="alias-row">
-            <span class="alias-num">{{ i === 0 ? '变体问法' : `变体问法${i + 1}` }}</span>
-            <input class="input" v-model="fromLogForm.aliasRows[i]">
-            <button v-if="i > 0" type="button" class="icon-btn" @click="fromLogForm.aliasRows.splice(i, 1)">✕</button>
-          </div>
-          <button type="button" class="btn sm ghost" @click="fromLogForm.aliasRows.push('')">＋ 变体问法</button>
-        </div>
-      </label>
-      <div style="display:flex;gap:10px;justify-content:flex-end">
-        <button class="btn ghost" @click="fromLogModal=false">取消</button>
-        <button class="btn" @click="saveFromLog" :disabled="!fromLogForm.answer.trim()">转正</button>
-      </div>
-    </div>
-  </div>
-</div>
+</template>
+</div><!-- /#app -->
 
 <script>
 const { createApp } = Vue;
@@ -655,7 +626,11 @@ createApp({
       tags: [], filterTagId: 'all',
       qas: [], keyword: '',
       leftWidth: parseInt(localStorage.getItem('manageLeftWidth')) || 300, resizing: false,
-      overview: {}, hot: [], unmatched: [],
+      catFlex: parseFloat(localStorage.getItem('catFlex')) || 6,
+      tagFlex: parseFloat(localStorage.getItem('tagFlex')) || 4,
+      resizingRow: false,
+      expandedQas: {},
+      overview: {}, topCategories: [], topTags: [],
       kbModal: false, kbEditId: null, kbForm: { name: '', description: '', is_default: false },
       intentModal: false,
       intentForm: { id: null, name: '', description: '', sort_order: 0, kb_ids: [] },
@@ -687,6 +662,16 @@ createApp({
     traceText() {
       const t = this.matchResult?.trace;
       return t ? JSON.stringify(t, null, 2) : '';
+    },
+    qaFormCategoryLabel() {
+      const id = this.qaForm?.category_id;
+      if (id == null) return '';
+      for (const c of this.categories) {
+        if (c.id === id) return c.name;
+        const ch = (c.children || []).find(x => x.id === id);
+        if (ch) return `${c.name} › ${ch.name}`;
+      }
+      return '';
     },
     noMatchReason() {
       const t = this.matchResult?.trace;
@@ -919,7 +904,48 @@ createApp({
       await this.api('POST', `/api/log/${this.matchResult.log_id}/feedback`, { feedback: fb });
       this.matchResult.matched.forEach(c => this.feedbackDone[c.qa_id] = true);
     },
-    goManage() { this.page = 'manage'; this.loadCategories(); this.loadTags(); this.loadQas(); },
+    goManage() { this.page = 'manage'; this.loadCategories(); this.loadTags(); this.loadQas(); this.defaultSelectFirstCat(); },
+    // 默认选中第一个一级分类（仅当当前是"全部"且存在分类时）
+    defaultSelectFirstCat() {
+      this.$nextTick(() => {
+        if (this.filterCategoryId === 'all' && this.categories.length) {
+          this.filterCategoryId = this.categories[0].id;
+          this.expandedCats[this.categories[0].id] = true;
+          this.loadQas();
+        }
+      });
+    },
+    // 分类/标签占比拖拽：按总份数 10，最小 2 份
+    startRowResize(e) {
+      e.preventDefault();
+      this.resizingRow = true;
+      const bar = e.currentTarget;
+      const catEl = bar.previousElementSibling;
+      const startY = e.clientY;
+      const startH = catEl.getBoundingClientRect().height;
+      const totalH = catEl.parentElement.getBoundingClientRect().height - 22; // 减去拖拽条等
+      const move = (ev) => {
+        const delta = ev.clientY - startY;
+        const ratio = Math.min(0.9, Math.max(0.15, (startH + delta) / totalH));
+        this.catFlex = Math.round(ratio * 100);
+        this.tagFlex = 100 - this.catFlex;
+      };
+      const up = () => {
+        this.resizingRow = false;
+        localStorage.setItem('catFlex', this.catFlex);
+        localStorage.setItem('tagFlex', this.tagFlex);
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+      };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    },
+    async moveCat(cat, direction) {
+      try {
+        await this.api('POST', `/api/categories/${cat.id}/move?direction=${direction}`);
+        await this.loadCategories();
+      } catch (e) { alert(e.message); }
+    },
     // 拖动左栏右缘（= QA列表左边框）调整两栏宽度，240~640px，记忆到本地
     startResize(e) {
       e.preventDefault();
@@ -966,12 +992,12 @@ createApp({
       this.loadQas();
     },
     async loadStats() {
-      const [ov, hot, um] = await Promise.all([
-        this.api('GET', `/api/stats/overview?kb_id=${this.kbId}`),
-        this.api('GET', `/api/stats/hot?kb_id=${this.kbId}`),
-        this.api('GET', `/api/stats/unmatched?kb_id=${this.kbId}`),
+      const [ov, topCats, topTags] = await Promise.all([
+        this.api('GET', '/api/stats/overview'),
+        this.api('GET', '/api/stats/top_categories'),
+        this.api('GET', '/api/stats/top_tags'),
       ]);
-      this.overview = ov; this.hot = hot; this.unmatched = um;
+      this.overview = ov; this.topCategories = topCats; this.topTags = topTags;
     },
     openKbNew() { this.kbEditId = null; this.kbForm = { name: '', description: '', is_default: false }; this.kbModal = true; },
     openKbEdit(k) { this.kbEditId = k.id; this.kbForm = { name: k.name, description: k.description || '', is_default: !!k.is_default }; this.kbModal = true; },
@@ -1114,7 +1140,17 @@ createApp({
       this.qaForm = qa
         ? { ...qa, tag_ids: (qa.tags || []).map(t => t.id),
             aliasRows: this.splitAliases(qa.question_aliases) }
-        : { kb_id: this.kbId, category_id: null, tag_ids: [], question: '', aliasRows: [''], answer: '' };
+        : { kb_id: this.kbId, tag_ids: [], question: '', aliasRows: [''], answer: '' };
+      // 新增：默认用左侧当前选中的分类（编辑：保留原分类）
+      if (!qa) {
+        if (this.filterCategoryId !== 'all') {
+          this.qaForm.category_id = this.filterCategoryId;
+        } else if (this.categories.length) {
+          this.qaForm.category_id = this.categories[0].id;
+        } else {
+          this.qaForm.category_id = null;
+        }
+      }
       this.qaModal = true;
       this.loadCatsFor(this.qaForm.kb_id);
     },
@@ -1147,25 +1183,6 @@ createApp({
       } catch (e) { alert(e.message); }
     },
     async delQa(qa) { if (confirm(`删除 QA「${qa.question}」？`)) { await this.api('DELETE', `/api/qas/${qa.id}`); this.loadQas(); this.loadCategories(); this.loadTags(); } },
-    openFromLog(u) {
-      this.fromLogForm = { log_id: u.id, question: u.question, kb_id: this.kbId, category_id: null, tag_ids: [], answer: '', aliasRows: [''], _original: u.question };
-      this.fromLogModal = true;
-    },    async onFromLogKbChange() {
-      await this.loadCatsFor(this.fromLogForm.kb_id);
-      const cats = this.catsOf(this.fromLogForm.kb_id);
-      const valid = !this.fromLogForm.category_id || this.findInCategories(cats, this.fromLogForm.category_id);
-      if (!valid) this.fromLogForm.category_id = null;
-    },
-    async saveFromLog() {
-      try {
-        await this.api('POST', `/api/qas/from_log/${this.fromLogForm.log_id}`, {
-          kb_id: this.fromLogForm.kb_id, category_id: this.fromLogForm.category_id, tag_ids: this.fromLogForm.tag_ids,
-          question: this.fromLogForm.question, answer: this.fromLogForm.answer,
-          question_aliases: this.joinAliases(this.fromLogForm.aliasRows),
-        });
-        this.fromLogModal = false; this.loadStats(); this.loadCategories(); this.loadTags();
-      } catch (e) { alert(e.message); }
-    },
   },
 }).mount('#app');
 </script>
