@@ -1001,6 +1001,38 @@ def stats_unmatched(kb_id: int):
     return [dict(r) for r in rows]
 
 
+@app.get("/api/stats/records", dependencies=[Depends(auth_dep)])
+def stats_records(limit: int = 500):
+    """历史提问记录（全局），供复盘统计页展示/删除/转QA。"""
+    conn = db.get_conn()
+    rows = conn.execute(
+        "SELECT id, kb_id, question, source, route_confidence, matched_qa_ids, "
+        "feedback, created_at FROM query_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["matched_question"] = None
+        try:
+            ids = json.loads(d.pop("matched_qa_ids") or "[]")
+        except (ValueError, TypeError):
+            ids = []
+        if ids:
+            q = conn.execute("SELECT question FROM qa WHERE id=?", (ids[0],)).fetchone()
+            d["matched_question"] = q["question"] if q else None
+        out.append(d)
+    return out
+
+
+@app.delete("/api/query_log/{log_id}", dependencies=[Depends(auth_dep)])
+def delete_query_log(log_id: int):
+    """彻底删除一条历史提问记录（垃圾/无效数据清理）。"""
+    with db.tx() as txn:
+        cur = txn.execute("DELETE FROM query_log WHERE id=?", (log_id,))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "记录不存在")
+    return {"ok": True}
+
+
 class FromLogIn(BaseModel):
     kb_id: int
     answer: str
