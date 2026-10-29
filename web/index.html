@@ -6,69 +6,137 @@
 <title>个人知识库 · FAQ 匹配</title>
 <script src="https://unpkg.com/vue@3.4.27/dist/vue.global.prod.js"></script>
 <style>
+/* ============ 设计变量（默认主题：雾灰） ============ */
+:root {
+  --bg: #f1f5f9;
+  --card: #ffffff;
+  --card-shadow: 0 2px 10px rgba(15,23,42,.05);
+  --text: #0f172a;
+  --text-2: #64748b;
+  --text-3: #94a3b8;
+  --border: #cbd5e1;
+  --border-soft: #e2e8f0;
+  --hover: #f1f5f9;
+  --primary: #4f46e5;
+  --primary-hover: #4338ca;
+  --primary-soft: #eef2ff;
+  --primary-border: #c7d2fe;
+  --primary-text: #3730a3;
+  --on-primary: #ffffff;
+  --nav-bg: #0f172a;
+  --nav-item: #1e293b;
+  --nav-text: #cbd5e1;
+  --nav-text-dim: #94a3b8;
+  --nav-border: #475569;
+  --nav-select-bg: #1e293b;
+  --nav-select-text: #e2e8f0;
+  --success: #15803d;
+  --success-bg: #dcfce7;
+  --success-border: #86efac;
+  --warn: #b45309;
+  --warn-bg: #fef3c7;
+  --warn-border: #fcd34d;
+  --miss: #ea580c;
+  --miss-bg: #fff7ed;
+  --miss-border: #fed7aa;
+  --danger: #dc2626;
+  --danger-bg: #fee2e2;
+  --danger-border: #fca5a5;
+  --input-bg: #ffffff;
+  --input-border: #cbd5e1;
+  --th-bg: #f8fafc;
+  --mask: rgba(15,23,42,.35);
+  --pre-bg: #0f172a;
+  --pre-text: #a5f3fc;
+}
+/* ============ 清新主题预设 ============ */
+[data-theme="mint"] { --bg:#eaf7f2; --hover:#e3f3ed; --primary:#0d9488; --primary-hover:#0f766e; --primary-soft:#d9f2ec; --primary-border:#9fdfd2; --primary-text:#115e59; --nav-bg:#134e4a; --nav-item:#115e59; --nav-border:#2d6f68; --nav-select-bg:#115e59; }
+[data-theme="sky"]  { --bg:#ebf4fc; --hover:#e2effa; --primary:#0284c7; --primary-hover:#0369a1; --primary-soft:#dbeefe; --primary-border:#a8d8f5; --primary-text:#075985; --nav-bg:#0c4a6e; --nav-item:#075985; --nav-border:#1e6091; --nav-select-bg:#075985; }
+[data-theme="sakura"] { --bg:#fbf2f5; --hover:#f7e9ee; --primary:#db2777; --primary-hover:#be185d; --primary-soft:#fce4ef; --primary-border:#f5bcd6; --primary-text:#9d174d; --nav-bg:#831843; --nav-item:#9d174d; --nav-border:#b04a75; --nav-select-bg:#9d174d; }
+[data-theme="cream"] { --bg:#f6f1e7; --hover:#f0e9db; --primary:#b45309; --primary-hover:#92400e; --primary-soft:#f8eccc; --primary-border:#ecd9a8; --primary-text:#92400e; --nav-bg:#443722; --nav-item:#5c4a2d; --nav-border:#6e5a3a; --nav-select-bg:#5c4a2d; }
+[data-theme="dark"] {
+  --bg:#0b1220; --card:#151e31; --card-shadow:0 2px 12px rgba(0,0,0,.45);
+  --text:#e2e8f0; --text-2:#94a3b8; --text-3:#64748b;
+  --border:#334155; --border-soft:#263349; --hover:#1c2740;
+  --primary:#818cf8; --primary-hover:#6366f1; --primary-soft:#232c55; --primary-border:#3b4370; --primary-text:#c7d2fe; --on-primary:#ffffff;
+  --nav-bg:#0f172a; --nav-item:#1e293b;
+  --success:#4ade80; --success-bg:#12301e; --success-border:#166534;
+  --warn:#fbbf24; --warn-bg:#33230a; --warn-border:#92400e;
+  --miss:#fb923c; --miss-bg:#331b0a; --miss-border:#7c2d12;
+  --danger:#f87171; --danger-bg:#371414; --danger-border:#7f1d1d;
+  --input-bg:#1a2438; --input-border:#334155;
+  --th-bg:#1a2438; --mask:rgba(0,0,0,.55); --pre-bg:#020617;
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f1f5f9; color: #0f172a; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--text); transition: background .25s ease, color .25s ease; }
 .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; }
-.login-card { background: #fff; padding: 36px 40px; border-radius: 16px; box-shadow: 0 8px 30px rgba(15,23,42,.08); width: 360px; }
+.login-card { background: var(--card); padding: 36px 40px; border-radius: 16px; box-shadow: 0 8px 30px rgba(15,23,42,.08); width: 360px; }
 .login-card h2 { font-size: 20px; margin-bottom: 6px; }
-.login-card p { font-size: 13px; color: #64748b; margin-bottom: 22px; }
-.nav { background: #0f172a; color: #fff; padding: 0 24px; display: flex; align-items: center; gap: 4px; height: 56px; position: sticky; top: 0; z-index: 10; }
+.login-card p { font-size: 13px; color: var(--text-2); margin-bottom: 22px; }
+.nav { background: var(--nav-bg); color: #fff; padding: 0 24px; display: flex; align-items: center; gap: 4px; height: 56px; position: sticky; top: 0; z-index: 10; transition: background .25s ease; }
 .nav .brand { font-weight: 700; margin-right: 20px; font-size: 15px; }
-.nav button.page-btn { background: none; border: none; color: #cbd5e1; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 14px; }
-.nav button.page-btn.active, .nav button.page-btn:hover { background: #1e293b; color: #fff; }
+.nav button.page-btn { background: none; border: none; color: var(--nav-text); padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+.nav button.page-btn.active, .nav button.page-btn:hover { background: var(--nav-item); color: #fff; }
 .nav .spacer { flex: 1; }
-.nav .kb-select { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 8px; padding: 6px 10px; font-size: 13px; max-width: 180px; }
-.nav .logout { background: none; border: 1px solid #475569; color: #94a3b8; border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 13px; }
+.nav .kb-select, .nav .theme-select { background: var(--nav-select-bg); color: var(--nav-select-text); border: 1px solid var(--nav-border); border-radius: 8px; padding: 6px 10px; font-size: 13px; max-width: 180px; cursor: pointer; }
+.nav .theme-select { max-width: 118px; }
+.nav .logout { background: none; border: 1px solid var(--nav-border); color: var(--nav-text-dim); border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 13px; }
 .container { max-width: 1080px; margin: 24px auto; padding: 0 16px; }
 .container.wide { max-width: 1440px; }
-.card { background: #fff; border-radius: 14px; padding: 20px 22px; box-shadow: 0 2px 10px rgba(15,23,42,.05); margin-bottom: 16px; }
-.btn { background: #4f46e5; color: #fff; border: none; border-radius: 8px; padding: 9px 18px; font-size: 14px; cursor: pointer; }
+.card { background: var(--card); border-radius: 14px; padding: 20px 22px; box-shadow: var(--card-shadow); margin-bottom: 16px; }
+.btn { background: var(--primary); color: var(--on-primary); border: none; border-radius: 8px; padding: 9px 18px; font-size: 14px; cursor: pointer; transition: background .15s ease, transform .1s ease, box-shadow .15s ease; }
+.btn:hover:not(:disabled) { background: var(--primary-hover); }
+.btn:active:not(:disabled) { transform: scale(.97); }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
-.btn.ghost { background: #fff; color: #475569; border: 1px solid #cbd5e1; }
+.btn.ghost { background: var(--card); color: var(--text-2); border: 1px solid var(--border); }
+.btn.ghost:hover:not(:disabled) { background: var(--hover); color: var(--text); }
 .btn.sm { padding: 5px 10px; font-size: 12.5px; }
-.btn.danger { background: #dc2626; }
-.input, textarea, select { width: 100%; border: 1px solid #cbd5e1; border-radius: 8px; padding: 9px 12px; font-size: 14px; font-family: inherit; background: #fff; }
-.input:focus, textarea:focus { outline: 2px solid #c7d2fe; border-color: #818cf8; }
-label.field { display: block; font-size: 13px; color: #475569; margin-bottom: 12px; }
+.btn.danger { background: var(--danger); }
+.btn.danger:hover:not(:disabled) { background: var(--danger); filter: brightness(.88); }
+.input, textarea, select { width: 100%; border: 1px solid var(--input-border); border-radius: 8px; padding: 9px 12px; font-size: 14px; font-family: inherit; background: var(--input-bg); color: var(--text); transition: border-color .15s ease, box-shadow .15s ease; }
+.input:focus, textarea:focus, select:focus { outline: 2px solid var(--primary-border); border-color: var(--primary); }
+label.field { display: block; font-size: 13px; color: var(--text-2); margin-bottom: 12px; }
 label.field span { display: block; margin-bottom: 5px; font-weight: 600; }
 .ask-box { display: flex; gap: 10px; margin-top: 4px; }
 .ask-box textarea { flex: 1; resize: vertical; min-height: 64px; }
-.route-chain { background: #eef2ff; border: 1px solid #c7d2fe; color: #3730a3; border-radius: 10px; padding: 10px 14px; font-size: 13.5px; margin: 14px 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.route-chain .degraded { color: #b45309; background: #fef3c7; border-radius: 6px; padding: 1px 8px; font-size: 12px; }
-.candidate { border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; }
+.route-chain { background: var(--primary-soft); border: 1px solid var(--primary-border); color: var(--primary-text); border-radius: 10px; padding: 10px 14px; font-size: 13.5px; margin: 14px 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.route-chain .degraded { color: var(--warn); background: var(--warn-bg); border-radius: 6px; padding: 1px 8px; font-size: 12px; }
+.candidate { border: 1px solid var(--border-soft); border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; transition: border-color .15s ease, box-shadow .15s ease; }
+.candidate:hover { border-color: var(--primary-border); box-shadow: 0 2px 12px rgba(15,23,42,.06); }
 .candidate .head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .candidate .q { font-weight: 700; font-size: 14.5px; }
-.candidate .score { color: #4f46e5; font-size: 13px; white-space: nowrap; }
-.candidate .meta { font-size: 12px; color: #94a3b8; margin-top: 2px; }
+.candidate .score { color: var(--primary); font-size: 13px; white-space: nowrap; }
+.candidate .meta { font-size: 12px; color: var(--text-3); margin-top: 2px; }
 .candidate details { margin-top: 8px; }
-.candidate summary { cursor: pointer; font-size: 13px; color: #4f46e5; }
-.candidate .body { font-size: 13.5px; color: #334155; margin-top: 8px; white-space: pre-wrap; line-height: 1.7; }
+.candidate summary { cursor: pointer; font-size: 13px; color: var(--primary); }
+.candidate .body { font-size: 13.5px; color: var(--text-2); margin-top: 8px; white-space: pre-wrap; line-height: 1.7; }
 .candidate .actions { margin-top: 10px; display: flex; gap: 8px; align-items: center; }
-.fb-useful { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
-.fb-useless { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
-.empty-new { background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; border-radius: 10px; padding: 12px 14px; font-size: 13.5px; }
-.step-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 14px; margin-top: 10px; font-size: 13px; }
-.step-card.running { background: #eef2ff; border-color: #c7d2fe; }
+.fb-useful { background: var(--success-bg); color: var(--success); border: 1px solid var(--success-border); }
+.fb-useless { background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-border); }
+.empty-new { background: var(--miss-bg); border: 1px solid var(--miss-border); color: var(--warn); border-radius: 10px; padding: 12px 14px; font-size: 13.5px; }
+.step-card { background: var(--th-bg); border: 1px solid var(--border-soft); border-radius: 10px; padding: 10px 14px; margin-top: 10px; font-size: 13px; }
+.step-card.running { background: var(--primary-soft); border-color: var(--primary-border); }
 .step-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .engine-badge { border-radius: 6px; padding: 1px 8px; font-size: 11.5px; font-weight: 600; }
-.engine-badge.llm { background: #dcfce7; color: #15803d; }
-.engine-badge.keyword { background: #fef3c7; color: #b45309; }
-.engine-badge.none { background: #f1f5f9; color: #64748b; }
-.step-ms { font-size: 11.5px; color: #94a3b8; white-space: nowrap; }
-.step-body { color: #475569; line-height: 1.7; font-size: 12.5px; }
-.step-body .dim { color: #94a3b8; }
+.engine-badge.llm { background: var(--success-bg); color: var(--success); }
+.engine-badge.keyword { background: var(--warn-bg); color: var(--warn); }
+.engine-badge.none { background: var(--hover); color: var(--text-2); }
+.step-ms { font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
+.step-body { color: var(--text-2); line-height: 1.7; font-size: 12.5px; }
+.step-body .dim { color: var(--text-3); }
 .trace-details { margin-top: 12px; }
-.trace-details summary { cursor: pointer; font-size: 12.5px; color: #64748b; }
-.trace-pre { background: #0f172a; color: #a5f3fc; border-radius: 10px; padding: 12px; font-size: 11.5px; line-height: 1.6; overflow-x: auto; white-space: pre-wrap; word-break: break-all; margin-top: 8px; }
+.trace-details summary { cursor: pointer; font-size: 12.5px; color: var(--text-2); }
+.trace-pre { background: var(--pre-bg); color: var(--pre-text); border-radius: 10px; padding: 12px; font-size: 11.5px; line-height: 1.6; overflow-x: auto; white-space: pre-wrap; word-break: break-all; margin-top: 8px; }
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
-.stat { background: #fff; border-radius: 12px; padding: 16px; text-align: center; }
-.stat .num { font-size: 26px; font-weight: 800; color: #1e293b; }
-.stat .lbl { font-size: 12.5px; color: #64748b; margin-top: 2px; }
+.stat { background: var(--card); border-radius: 12px; padding: 16px; text-align: center; box-shadow: var(--card-shadow); }
+.stat .num { font-size: 26px; font-weight: 800; color: var(--text); }
+.stat .lbl { font-size: 12.5px; color: var(--text-2); margin-top: 2px; }
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
-th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid #e2e8f0; }
-th { color: #64748b; font-weight: 600; background: #f8fafc; }
+th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border-soft); }
+th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
 /* 题库管理：左栏（分类上 / 标签下），固定一屏高，两侧独立滚动 */
-.tree-col { position: sticky; top: 80px; align-self: start; height: calc(100vh - 104px); min-height: 420px; background: #fff; border-radius: 14px; padding: 14px; box-shadow: 0 2px 10px rgba(15,23,42,.05); display: flex; flex-direction: column; gap: 12px; }
+.tree-col { position: sticky; top: 80px; align-self: start; height: calc(100vh - 104px); min-height: 420px; background: var(--card); border-radius: 14px; padding: 14px; box-shadow: var(--card-shadow); display: flex; flex-direction: column; gap: 12px; }
 .tree-half { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 /* 分类:标签 默认 6:4，可拖拽行分隔条调整 */
 .tree-half.cat-half { flex: 6; }
@@ -76,68 +144,88 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
 /* 分类/标签之间的水平拖拽条 */
 .row-resizer { height: 10px; margin: -6px -4px; cursor: row-resize; z-index: 5; border-radius: 6px; position: relative; flex-shrink: 0; }
 .row-resizer::after { content: ''; position: absolute; left: 30%; right: 30%; top: 4.5px; height: 2px; border-radius: 2px; background: transparent; transition: background .15s; }
-.row-resizer:hover::after, .row-resizer.dragging::after { background: #6366f1; }
-.icon-btn.tiny { font-size: 9px; padding: 1px 3px; color:#94a3b8; }
-.icon-btn.tiny:hover:not(:disabled) { color:#4f46e5; }
+.row-resizer:hover::after, .row-resizer.dragging::after { background: var(--primary); }
+.icon-btn.tiny { font-size: 9px; padding: 1px 3px; color: var(--text-3); }
+.icon-btn.tiny:hover:not(:disabled) { color: var(--primary); }
 .icon-btn.tiny:disabled { opacity: .25; cursor: default; }
 .tree-half .section-title { margin-bottom: 6px; }
 .tree-scroll { flex: 1; min-height: 0; overflow-y: auto; padding-right: 2px; }
 /* 左栏右缘拖拽调宽手柄（= QA列表左侧边框） */
 .col-resizer { position: absolute; top: 4px; bottom: 4px; right: -11px; width: 10px; cursor: col-resize; z-index: 5; border-radius: 6px; }
-.col-resizer:hover, .col-resizer.dragging { background: rgba(99,102,241,.18); }
+.col-resizer:hover, .col-resizer.dragging { background: var(--primary-soft); }
 .l1-item { margin-bottom: 1px; }
 .l1-head { display: flex; align-items: center; gap: 4px; padding: 4px 6px; border-radius: 8px; font-weight: 600; font-size: 12.5px; cursor: pointer; }
-.l1-head:hover { background: #f1f5f9; }
-.l1-head .arrow { transition: .15s; font-size: 10px; color: #94a3b8; cursor: pointer; flex-shrink: 0; padding: 2px; }
+.l1-head:hover { background: var(--hover); }
+.l1-head .arrow { transition: .15s; font-size: 10px; color: var(--text-3); cursor: pointer; flex-shrink: 0; padding: 2px; }
 .l1-head .arrow.open { transform: rotate(90deg); }
 .l1-head .cat-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
-.l1-head .cnt { font-size: 11px; color: #94a3b8; white-space: nowrap; flex-shrink: 0; }
-.l2-item { display: flex; justify-content: space-between; align-items: center; gap: 4px; padding: 3px 6px 3px 20px; border-radius: 8px; font-size: 12px; color: #475569; cursor: pointer; }
-.l2-item:hover { background: #f1f5f9; }
-.l2-item.active { background: #eef2ff; color: #3730a3; font-weight: 600; }
+.l1-head .cnt { font-size: 11px; color: var(--text-3); white-space: nowrap; flex-shrink: 0; }
+.l2-item { display: flex; justify-content: space-between; align-items: center; gap: 4px; padding: 3px 6px 3px 20px; border-radius: 8px; font-size: 12px; color: var(--text-2); cursor: pointer; }
+.l2-item:hover { background: var(--hover); }
+.l2-item.active { background: var(--primary-soft); color: var(--primary-text); font-weight: 600; }
 .l2-item .cat-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.l2-item .cnt { font-size: 11px; color: #94a3b8; flex-shrink: 0; }
-.l2-item.add-cat { color: #6366f1; font-size: 12px; }
-.l2-item.add-cat:hover { background: #eef2ff; }
-.icon-btn { background: none; border: none; cursor: pointer; color: #94a3b8; font-size: 14px; padding: 2px 5px; border-radius: 5px; }
-.icon-btn:hover { background: #e2e8f0; color: #334155; }
+.l2-item .cnt { font-size: 11px; color: var(--text-3); flex-shrink: 0; }
+.l2-item.add-cat { color: var(--primary); font-size: 12px; }
+.l2-item.add-cat:hover { background: var(--primary-soft); }
+.icon-btn { background: none; border: none; cursor: pointer; color: var(--text-3); font-size: 14px; padding: 2px 5px; border-radius: 5px; transition: background .15s ease, color .15s ease; }
+.icon-btn:hover { background: var(--hover); color: var(--text); }
 .manage-grid { display: grid; grid-template-columns: 300px 1fr; gap: 16px; }
 @media (max-width: 1080px) { .manage-grid { grid-template-columns: 1fr !important; } .col-resizer { display: none; } .tree-col { position: static; height: auto; } .tree-half { max-height: 45vh; } }
-.drawer-mask { position: fixed; inset: 0; background: rgba(15,23,42,.35); z-index: 20; display: flex; justify-content: flex-end; }
-.drawer { background: #fff; width: min(560px, 92vw); height: 100%; overflow-y: auto; padding: 24px; }
+.drawer-mask { position: fixed; inset: 0; background: var(--mask); z-index: 20; display: flex; justify-content: flex-end; }
+.drawer { background: var(--card); width: min(560px, 92vw); height: 100%; overflow-y: auto; padding: 24px; }
 .drawer h3 { margin-bottom: 16px; font-size: 17px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
 .form-grid .full { grid-column: 1 / -1; }
-.modal-mask { position: fixed; inset: 0; background: rgba(15,23,42,.35); z-index: 30; display: flex; align-items: center; justify-content: center; }
-.modal { background: #fff; border-radius: 14px; padding: 22px 24px; width: min(440px, 92vw); }
+.modal-mask { position: fixed; inset: 0; background: var(--mask); z-index: 30; display: flex; align-items: center; justify-content: center; }
+.modal { background: var(--card); border-radius: 14px; padding: 22px 24px; width: min(440px, 92vw); }
 .bubble-chart .row { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
-.bubble-chart .bar-wrap { flex: 1; background: #f1f5f9; border-radius: 6px; height: 18px; overflow: hidden; }
-.bubble-chart .bar { height: 100%; background: #6366f1; border-radius: 6px; }
-.err { color: #dc2626; font-size: 13px; margin-top: 8px; }
-.ok-tip { color: #16a34a; font-size: 13px; }
+.bubble-chart .bar-wrap { flex: 1; background: var(--hover); border-radius: 6px; height: 18px; overflow: hidden; }
+.bubble-chart .bar { height: 100%; background: var(--primary); border-radius: 6px; transition: width .4s ease; }
+.err { color: var(--danger); font-size: 13px; margin-top: 8px; }
+.ok-tip { color: var(--success); font-size: 13px; }
 .section-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; gap: 10px; }
 .section-title h3 { font-size: 16px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.section-title h3 .filter-desc { font-size: 12px; color: #94a3b8; font-weight: 400; }
+.section-title h3 .filter-desc { font-size: 12px; color: var(--text-3); font-weight: 400; }
 .btn-group { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
 .btn-group .btn { white-space: nowrap; }
 .settings-grid { display: grid; grid-template-columns: 1fr; gap: 0; }
 .tag-cloud { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 8px 12px; }
-.tag-chip { display: inline-flex; align-items: center; gap: 4px; background: #f1f5f9; border: 1px solid #e2e8f0; color: #475569; border-radius: 999px; padding: 3px 10px; font-size: 12.5px; cursor: pointer; user-select: none; }
-.tag-chip:hover { border-color: #a5b4fc; }
-.tag-chip.active { background: #eef2ff; border-color: #818cf8; color: #3730a3; font-weight: 600; }
-.tag-chip .tag-cnt { font-size: 11px; color: #94a3b8; background: #e2e8f0; border-radius: 999px; padding: 0 6px; }
+.tag-chip { display: inline-flex; align-items: center; gap: 4px; background: var(--hover); border: 1px solid var(--border-soft); color: var(--text-2); border-radius: 999px; padding: 3px 10px; font-size: 12.5px; cursor: pointer; user-select: none; transition: border-color .15s ease, background .15s ease, color .15s ease; }
+.tag-chip:hover { border-color: var(--primary); }
+.tag-chip.active { background: var(--primary-soft); border-color: var(--primary); color: var(--primary-text); font-weight: 600; }
+.tag-chip .tag-cnt { font-size: 11px; color: var(--text-3); background: var(--border-soft); border-radius: 999px; padding: 0 6px; }
 .tag-chip .tag-ops { display: none; }
 .tag-chip:hover .tag-ops { display: inline-flex; }
 .tag-chip.mini { font-size: 11px; padding: 1px 8px; cursor: default; }
-.tag-select { display: flex; flex-wrap: wrap; gap: 8px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px; }
-.tag-check { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: #475569; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 999px; padding: 3px 10px; cursor: pointer; }
-.tag-check.on { background: #eef2ff; border-color: #818cf8; color: #3730a3; }
-.l1-head .active, .l1-head span.active { color: #3730a3; font-weight: 700; }
-.l1-item.active .l1-head { background: #eef2ff; }
+.tag-select { display: flex; flex-wrap: wrap; gap: 8px; border: 1px solid var(--input-border); border-radius: 8px; padding: 10px; }
+.tag-check { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--text-2); background: var(--th-bg); border: 1px solid var(--border-soft); border-radius: 999px; padding: 3px 10px; cursor: pointer; transition: all .15s ease; }
+.tag-check.on { background: var(--primary-soft); border-color: var(--primary); color: var(--primary-text); }
+.l1-head .active, .l1-head span.active { color: var(--primary-text); font-weight: 700; }
+.l1-item.active .l1-head { background: var(--primary-soft); }
 .alias-rows { display: flex; flex-direction: column; gap: 8px; }
 .alias-row { display: flex; align-items: center; gap: 8px; }
-.alias-row .alias-num { font-size: 12px; color: #64748b; white-space: nowrap; min-width: 58px; }
+.alias-row .alias-num { font-size: 12px; color: var(--text-2); white-space: nowrap; min-width: 58px; }
 .alias-row .input { flex: 1; }
+/* ============ 过渡与状态 ============ */
+.nav button.page-btn, .nav .logout { transition: background .15s ease, color .15s ease; }
+@keyframes pageIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.container > div { animation: pageIn .22s ease; }
+@keyframes emptyBounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+.empty-cta { text-align: center; padding: 26px 12px; }
+.empty-cta .icon { font-size: 30px; display: inline-block; animation: emptyBounce 2.4s ease-in-out infinite; }
+.empty-cta .tip { font-size: 13px; color: var(--text-3); margin: 8px 0 12px; }
+/* ============ 移动端适配 ============ */
+@media (max-width: 720px) {
+  .container { margin: 12px auto; padding: 0 10px; }
+  .card { padding: 14px 12px; overflow-x: auto; }
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  .stat .num { font-size: 20px; }
+  .nav { padding: 0 10px; gap: 2px; }
+  .nav .brand { font-size: 13px; margin-right: 8px; }
+  .nav button.page-btn { padding: 8px 9px; font-size: 13px; }
+  th, td { padding: 7px 8px; font-size: 12.5px; }
+  .drawer { width: 100vw; }
+}
 </style>
 </head>
 <body>
@@ -166,6 +254,14 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
     <select v-if="page==='manage'" class="kb-select" v-model="kbId" @change="onKbSwitch">
       <option v-for="k in kbs" :key="k.id" :value="k.id">{{ k.name }}（{{ k.qa_count }}题）</option>
     </select>
+    <select class="theme-select" :value="theme" @change="setTheme($event.target.value)" title="切换界面主题">
+      <option value="slate">⬜ 雾灰</option>
+      <option value="mint">🌿 薄荷</option>
+      <option value="sky">☁️ 晴空</option>
+      <option value="sakura">🌸 樱粉</option>
+      <option value="cream">🍮 奶杏</option>
+      <option value="dark">🌙 夜读</option>
+    </select>
     <button class="logout" @click="logout">退出</button>
   </div>
 
@@ -175,13 +271,13 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
       <div class="card">
         <div class="section-title"><h3>面试官问了你什么？</h3>
           <span style="flex:1"></span>
-          <span style="font-size:12px;color:#94a3b8">全知识库检索</span>
+          <span style="font-size:12px;color:var(--text-3)">全知识库检索</span>
         </div>
         <div class="ask-box">
           <textarea v-model="question" placeholder="输入面试官的原话，例如：你的项目里检索不准是怎么优化的？"></textarea>
         </div>
         <div style="display:flex;gap:10px;align-items:center;margin-top:10px">
-          <label style="font-size:12.5px;color:#64748b;display:flex;align-items:center;gap:6px">
+          <label style="font-size:12.5px;color:var(--text-2);display:flex;align-items:center;gap:6px">
             返回条数
             <select v-model="topK" style="width:90px;padding:5px 8px;font-size:12.5px">
               <option value="">默认</option>
@@ -211,7 +307,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
         <div class="route-chain">
           <b>路由</b>
           <span>{{ matchResult.route.intent_name || '未识别意图' }}</span>
-          <span v-if="matchResult.route.kb_names?.length" style="font-size:12.5px;color:#4f46e5">→ 检索库：{{ matchResult.route.kb_names.join('、') }}</span>
+          <span v-if="matchResult.route.kb_names?.length" style="font-size:12.5px;color:var(--primary)">→ 检索库：{{ matchResult.route.kb_names.join('、') }}</span>
           <span>confidence {{ (matchResult.route.confidence ?? 0).toFixed(2) }}</span>
           <span v-if="matchResult.route.degraded" class="degraded">关键词兜底（LLM 不可用）</span>
           <span style="color:#6370a3;font-size:12px">{{ matchResult.route.reason }}</span>
@@ -234,14 +330,14 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
         </div>
 
         <div v-if="matchResult.free_answer" class="candidate" style="border-left:3px solid #f59e0b">
-          <div class="head"><span class="q">🤖 模型生成回答</span><span class="score" style="color:#b45309">非题库答案</span></div>
+          <div class="head"><span class="q">🤖 模型生成回答</span><span class="score" style="color:var(--warn)">非题库答案</span></div>
           <div class="meta">三级检索均未命中 · 宽松模式下由大模型用自身知识回答，仅供参考</div>
           <div class="body" style="white-space:pre-wrap">{{ matchResult.free_answer }}</div>
         </div>
 
         <div v-if="matchResult.source==='new' && !matchResult.free_answer" class="empty-new">
           <div>题库还没有覆盖这个问题，已记录到<b>查询日志</b>。</div>
-          <div style="font-size:12px;margin-top:6px;color:#b45309" v-html="noMatchReason"></div>
+          <div style="font-size:12px;margin-top:6px;color:var(--warn)" v-html="noMatchReason"></div>
         </div>
 
         <details v-if="matchResult.trace" class="trace-details">
@@ -285,7 +381,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
                 <div class="l2-item add-cat" @click.stop="openCatEdit(null, c)">＋ 新增二级分类</div>
               </div>
             </div>
-            <div v-if="!categories.length" style="color:#94a3b8;font-size:13px;padding:12px">还没有分类，点击右上角创建</div>
+            <div v-if="!categories.length" style="color:var(--text-3);font-size:13px;padding:12px">还没有分类，点击右上角创建</div>
           </div>
         </div>
 
@@ -306,7 +402,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
                 </span>
               </span>
             </div>
-            <div v-if="!tags.length" style="color:#94a3b8;font-size:13px;padding:0 0 12px 12px">还没有标签</div>
+            <div v-if="!tags.length" style="color:var(--text-3);font-size:13px;padding:0 0 12px 12px">还没有标签</div>
           </div>
         </div>
       </div>
@@ -331,7 +427,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
                 <td style="white-space:nowrap;font-size:12.5px">{{ qa.category_l1 ? (qa.category_l2 ? qa.category_l2 : qa.category_l1) : '—' }}</td>
                 <td style="max-width:160px">
                   <span v-for="t in qa.tags" :key="t.id" class="tag-chip mini">{{ t.name }}</span>
-                  <span v-if="!qa.tags?.length" style="color:#cbd5e1">—</span>
+                  <span v-if="!qa.tags?.length" style="color:var(--text-3)">—</span>
                 </td>
                 <td>{{ qa.hit_count }}</td>
                 <td style="white-space:nowrap">
@@ -339,12 +435,12 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
                   <button class="icon-btn" @click="delQa(qa)">🗑</button>
                 </td>
               </tr>
-              <tr v-if="expandedQas[qa.id]" style="background:#f8fafc">
+              <tr v-if="expandedQas[qa.id]" style="background:var(--th-bg)">
                 <td></td>
-                <td colspan="5" style="padding:8px 12px;white-space:pre-wrap;font-size:12.5px;color:#334155;border-left:3px solid #6366f1">{{ qa.answer || '（无答案）' }}</td>
+                <td colspan="5" style="padding:8px 12px;white-space:pre-wrap;font-size:12.5px;color:var(--text);border-left:3px solid var(--primary)">{{ qa.answer || '（无答案）' }}</td>
               </tr>
             </template>
-            <tr v-if="!qas.length"><td colspan="6" style="color:#94a3b8;text-align:center;padding:24px">当前筛选条件下暂无 QA，点击右上角新增或批量导入</td></tr>
+            <tr v-if="!qas.length"><td colspan="6" style="color:var(--text-3);text-align:center;padding:24px">当前筛选条件下暂无 QA，点击右上角新增或批量导入</td></tr>
           </tbody>
         </table>
       </div>
@@ -354,7 +450,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
     <div v-if="page==='settings'" class="settings-grid">
       <div class="card">
         <div class="section-title"><h3>🧭 意图管理</h3><button class="btn sm" @click="openIntentEdit(null)">＋意图</button></div>
-        <p style="font-size:12px;color:#94a3b8;margin:0 0 10px 2px;line-height:1.6">
+        <p style="font-size:12px;color:var(--text-3);margin:0 0 10px 2px;line-height:1.6">
           意图是全局路由层：匹配时 LLM 先识别问题属于哪个意图，再到该意图挂载的知识库中全量检索。一个意图可挂多个库。</p>
         <table>
           <thead><tr><th>意图</th><th>挂载知识库</th><th>覆盖题数</th><th>操作</th></tr></thead>
@@ -362,16 +458,16 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
             <tr v-for="it in intents" :key="it.id">
               <td>
                 <b style="font-size:13.5px">{{ it.name }}</b>
-                <div v-if="it.description" style="font-size:12px;color:#94a3b8">{{ it.description }}</div>
+                <div v-if="it.description" style="font-size:12px;color:var(--text-3)">{{ it.description }}</div>
               </td>
-              <td style="font-size:12.5px;color:#4f46e5">{{ it.kb_ids.length ? it.kbNames.join('、') : '⚠ 未挂载' }}</td>
+              <td style="font-size:12.5px;color:var(--primary)">{{ it.kb_ids.length ? it.kbNames.join('、') : '⚠ 未挂载' }}</td>
               <td>{{ it.qa_count }}</td>
               <td style="white-space:nowrap">
                 <button class="icon-btn" @click="openIntentEdit(it)">✏️</button>
                 <button class="icon-btn" @click="delIntent(it)">🗑</button>
               </td>
             </tr>
-            <tr v-if="!intents.length"><td colspan="4" style="color:#94a3b8;text-align:center;padding:20px">还没有意图</td></tr>
+            <tr v-if="!intents.length"><td colspan="4" style="color:var(--text-3);text-align:center;padding:20px">还没有意图</td></tr>
           </tbody>
         </table>
       </div>
@@ -383,7 +479,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
           <tbody>
             <tr v-for="k in kbs" :key="k.id">
               <td><b>{{ k.name }}</b></td>
-              <td style="font-size:12.5px;color:#64748b">{{ k.description || '—' }}</td>
+              <td style="font-size:12.5px;color:var(--text-2)">{{ k.description || '—' }}</td>
               <td>{{ k.qa_count }}</td>
               <td>{{ k.is_default ? '✅' : '' }}</td>
               <td style="white-space:nowrap">
@@ -397,7 +493,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
 
       <div class="card">
         <div class="section-title"><h3>⚙ 匹配参数</h3><span v-if="settingsSaved" class="ok-tip">已保存</span></div>
-        <p style="font-size:12px;color:#94a3b8;margin:0 0 12px 2px;line-height:1.6">
+        <p style="font-size:12px;color:var(--text-3);margin:0 0 12px 2px;line-height:1.6">
           保存后立即生效（存服务器数据库，无需重启）。阈值调高 → 更严格、宁可进新问题池；调低 → 更容易出候选。<br>
           检索漏斗：① 关键词直配 → ② 向量检索 → ③ 关键词检索 → ④ 向量兜底+LLM核验 → 严格/宽松分支。</p>
         <div class="form-grid">
@@ -420,7 +516,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
             <input class="input" type="number" step="1" min="1" max="10" v-model="settingsForm.default_top_k"></label>
         </div>
         <div style="display:flex;justify-content:flex-end;gap:10px;align-items:center">
-          <span v-if="vectorStatus" style="font-size:12px;color:#94a3b8">向量库：{{ vectorStatus.total }} 条 · 待更新 {{ vectorStatus.stale }} 条 · 模型 {{ vectorStatus.model }}</span>
+          <span v-if="vectorStatus" style="font-size:12px;color:var(--text-3)">向量库：{{ vectorStatus.total }} 条 · 待更新 {{ vectorStatus.stale }} 条 · 模型 {{ vectorStatus.model }}</span>
           <button class="btn ghost" @click="rebuildVectors" :disabled="rebuilding">{{ rebuilding ? '重建中…' : '🔄 重建向量库' }}</button>
           <button class="btn" @click="saveSettings" :disabled="settingsSaving">{{ settingsSaving ? '保存中…' : '保存参数' }}</button>
         </div>
@@ -432,32 +528,40 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
       <div class="stat-grid">
         <div class="stat"><div class="num">{{ overview.qa_total }}</div><div class="lbl">题库总数</div></div>
         <div class="stat"><div class="num">{{ overview.query_total }}</div><div class="lbl">累计提问</div></div>
-        <div class="stat"><div class="num" style="color:#16a34a">{{ overview.hit }}</div><div class="lbl">命中次数</div></div>
-        <div class="stat"><div class="num" style="color:#ea580c">{{ overview.new }}</div><div class="lbl">未命中</div></div>
+        <div class="stat"><div class="num" style="color:var(--success)">{{ overview.hit }}</div><div class="lbl">命中次数</div></div>
+        <div class="stat"><div class="num" style="color:var(--miss)">{{ overview.new }}</div><div class="lbl">未命中</div></div>
         <div class="stat"><div class="num">{{ overview.hit_rate==null ? '—' : (overview.hit_rate*100).toFixed(0)+'%' }}</div><div class="lbl">命中率</div></div>
       </div>
       <div class="card bubble-chart">
         <div class="section-title"><h3>🏆 Top10 知识库-分类（按累计被问）</h3></div>
         <div v-for="(h, i) in topCategories" :key="i" class="row">
-          <span style="width:52px;font-size:12px;color:#6366f1;font-weight:700">{{ h.hits }}次</span>
+          <span style="width:52px;font-size:12px;color:var(--primary);font-weight:700">{{ h.hits }}次</span>
           <div class="bar-wrap"><div class="bar" :style="{width: (h.hits / topCategories[0].hits * 100) + '%'}"></div></div>
           <span style="width:42%;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ h.kb_name }} › {{ h.category_name }}（{{ h.qa_count }}题）</span>
         </div>
-        <div v-if="!topCategories.length" style="color:#94a3b8;font-size:13px">还没有被问记录</div>
+        <div v-if="!topCategories.length" class="empty-cta">
+          <span class="icon">🏆</span>
+          <div class="tip">还没有被问记录 · 提问命中后这里会亮起来</div>
+          <button class="btn sm" @click="page='match'">去提问</button>
+        </div>
       </div>
       <div class="card bubble-chart">
         <div class="section-title"><h3>🏷 Top10 知识库-标签（按累计被问）</h3></div>
         <div v-for="(h, i) in topTags" :key="i" class="row">
-          <span style="width:52px;font-size:12px;color:#6366f1;font-weight:700">{{ h.hits }}次</span>
+          <span style="width:52px;font-size:12px;color:var(--primary);font-weight:700">{{ h.hits }}次</span>
           <div class="bar-wrap"><div class="bar" :style="{width: (h.hits / topTags[0].hits * 100) + '%'}"></div></div>
           <span style="width:42%;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ h.kb_name }} › #{{ h.tag_name }}（{{ h.qa_count }}题）</span>
         </div>
-        <div v-if="!topTags.length" style="color:#94a3b8;font-size:13px">还没有被问记录</div>
+        <div v-if="!topTags.length" class="empty-cta">
+          <span class="icon">🏷</span>
+          <div class="tip">还没有标签命中记录 · 提问命中后这里会亮起来</div>
+          <button class="btn sm" @click="page='match'">去提问</button>
+        </div>
       </div>
 
       <div class="card">
         <div class="section-title">
-          <h3>🕘 历史问题记录 <span style="font-size:12px;color:#94a3b8;font-weight:400">共 {{ records.length }} 条 · 垃圾数据可删除</span></h3>
+          <h3>🕘 历史问题记录 <span style="font-size:12px;color:var(--text-3);font-weight:400">共 {{ records.length }} 条 · 垃圾数据可删除</span></h3>
         </div>
         <table>
           <thead><tr><th style="width:44%">问题</th><th>结果</th><th>时间</th><th>操作</th></tr></thead>
@@ -465,12 +569,12 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
             <tr v-for="r in records" :key="r.id">
               <td style="max-width:380px">{{ r.question }}</td>
               <td style="white-space:nowrap;font-size:12.5px">
-                <span v-if="r.source==='match'" style="color:#16a34a" :title="r.matched_question || ''">✓ 命中</span>
-                <span v-else-if="r.source==='converted'" style="color:#6366f1" :title="'已转正为 QA：' + (r.matched_question || '')">✔ 已转QA</span>
+                <span v-if="r.source==='match'" style="color:var(--success)" :title="r.matched_question || ''">✓ 命中</span>
+                <span v-else-if="r.source==='converted'" style="color:var(--primary)" :title="'已转正为 QA：' + (r.matched_question || '')">✔ 已转QA</span>
                 <span v-else-if="r.source==='generated'" style="color:#d97706">🤖 模型回答</span>
-                <span v-else style="color:#ea580c">✗ 未命中</span>
+                <span v-else style="color:var(--miss)">✗ 未命中</span>
               </td>
-              <td style="white-space:nowrap;color:#94a3b8;font-size:12.5px">{{ r.created_at }}</td>
+              <td style="white-space:nowrap;color:var(--text-3);font-size:12.5px">{{ r.created_at }}</td>
               <td style="white-space:nowrap">
                 <template v-if="confirmDelLog !== r.id">
                   <button class="icon-btn" title="彻底删除该记录" @click="confirmDelLog = r.id">🗑</button>
@@ -481,7 +585,13 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
                 </template>
               </td>
             </tr>
-            <tr v-if="!records.length"><td colspan="4" style="color:#94a3b8;text-align:center;padding:20px">还没有提问记录，去匹配页试一次</td></tr>
+            <tr v-if="!records.length"><td colspan="4">
+              <div class="empty-cta">
+                <span class="icon">🕘</span>
+                <div class="tip">还没有提问记录 · 去匹配页问第一个问题吧</div>
+                <button class="btn sm" @click="page='match'">去提问</button>
+              </div>
+            </td></tr>
           </tbody>
         </table>
       </div>
@@ -535,7 +645,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
           <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
         </select>
       </label>
-      <p v-if="catForm.id" style="font-size:12px;color:#94a3b8;margin-bottom:12px">
+      <p v-if="catForm.id" style="font-size:12px;color:var(--text-3);margin-bottom:12px">
         编辑时不改层级；删除分类会连带删除其子分类，QA 本身保留（分类置空）。</p>
       <div style="display:flex;gap:10px;justify-content:flex-end">
         <button class="btn ghost" @click="catModal=false">取消</button>
@@ -578,7 +688,7 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
             <label v-for="t in tags" :key="t.id" class="tag-check" :class="{on: qaForm.tag_ids.includes(t.id)}">
               <input type="checkbox" :value="t.id" v-model="qaForm.tag_ids"> {{ t.name }}
             </label>
-            <span v-if="!tags.length" style="font-size:12.5px;color:#94a3b8">还没有标签，可在左侧标签区创建</span>
+            <span v-if="!tags.length" style="font-size:12.5px;color:var(--text-3)">还没有标签，可在左侧标签区创建</span>
           </div>
         </label>
         <label class="field full"><span>答案 *</span><textarea class="input" rows="6" v-model="qaForm.answer"></textarea></label>
@@ -604,25 +714,25 @@ th { color: #64748b; font-weight: 600; background: #f8fafc; }
   <div v-if="importModal" class="drawer-mask" @click.self="importModal=false">
     <div class="drawer" style="width:min(680px,94vw)">
       <h3>📥 Markdown 批量导入</h3>
-      <p style="font-size:12.5px;color:#64748b;line-height:1.7;margin-bottom:10px">
+      <p style="font-size:12.5px;color:var(--text-2);line-height:1.7;margin-bottom:10px">
         格式：<code># 一级分类</code>（不存在会自动创建）·
         <code>## 问题</code>（→ QA）· 字段行 <code>- 标签: / - 别名: / - 答案: / - 追问: / - STAR: / - 质量:</code>（标签逗号/顿号分隔，别名可多行）·
         其余正文自动追加到答案。同库同问题自动跳过。
-        <a href="#" @click.prevent="importExample" style="color:#4f46e5">填入示例</a>
+        <a href="#" @click.prevent="importExample" style="color:var(--primary)">填入示例</a>
       </p>
       <label class="field"><span>粘贴 Markdown 或选择文件</span>
         <textarea class="input" rows="10" v-model="importText" placeholder="# 技术原理&#10;> RAG、LLM等技术&#10;&#10;## 1、如何优化RAG召回&#10;- 别名: rag检索差怎么办&#10;- 答案: 先诊断再优化&#10;- 质量: 4"></textarea>
       </label>
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
         <input type="file" ref="importFile" accept=".md,.markdown,.txt" @change="onImportFile" style="font-size:12.5px">
-        <span style="font-size:12px;color:#94a3b8">.md / .txt</span>
+        <span style="font-size:12px;color:var(--text-3)">.md / .txt</span>
       </div>
-      <div v-if="importPreview" class="route-chain" style="background:#f0fdf4;border-color:#86efac;color:#166534">
+      <div v-if="importPreview" class="route-chain" style="background:var(--success-bg);border-color:var(--success-border);color:var(--success)">
         <b>预览</b><span>共 {{ importPreview.total }} 题 / {{ importPreview.sections.length }} 个大类</span>
         <span v-for="s in importPreview.sections" :key="s.name" style="font-size:12px">{{ s.name }}({{ s.count }})</span>
-        <span v-if="importPreview.errors.length" style="color:#b45309">⚠ {{ importPreview.errors.length }} 条警告</span>
+        <span v-if="importPreview.errors.length" style="color:var(--warn)">⚠ {{ importPreview.errors.length }} 条警告</span>
       </div>
-      <div v-if="importResult" class="route-chain" :style="importResult.failed ? 'background:#fef2f2;border-color:#fca5a5;color:#991b1b' : 'background:#f0fdf4;border-color:#86efac;color:#166534'">
+      <div v-if="importResult" class="route-chain" :style="importResult.failed ? 'background:var(--danger-bg);border-color:var(--danger-border);color:var(--danger)' : 'background:var(--success-bg);border-color:var(--success-border);color:var(--success)'">
         <b>结果</b>
         <span>导入 {{ importResult.imported }} · 跳过已存在 {{ importResult.skipped_exist }} · 失败 {{ importResult.failed }}</span>
         <span v-if="importResult.created_categories">新建分类 {{ importResult.created_categories }}</span>
@@ -645,6 +755,7 @@ createApp({
   data() {
     return {
       token: localStorage.getItem('token') || '',
+      theme: localStorage.getItem('uiTheme') || 'slate',
       loginForm: { username: '', password: '' }, loginErr: '', loggingIn: false,
       page: 'match',
       kbs: [], kbId: null,
@@ -722,10 +833,33 @@ createApp({
       return parts.join('；');
     },
   },
+  watch: {
+    // hash 路由记忆：页面切换同步到 URL，刷新/收藏不丢状态
+    page(v) {
+      try {
+        const h = '#/' + v;
+        if (location.hash !== h) history.replaceState(null, '', h);
+      } catch (e) { /* file:// 等环境忽略 */ }
+    },
+  },
   async mounted() {
-    if (this.token) await this.initData();
+    document.documentElement.dataset.theme = this.theme;  // 恢复上次主题
+    window.addEventListener('hashchange', this.onHashChange);
+    if (this.token) { await this.initData(); this.onHashChange(); }  // 登录态下恢复上次页面
   },
   methods: {
+    setTheme(t) { this.theme = t; localStorage.setItem('uiTheme', t); document.documentElement.dataset.theme = t; },
+    onHashChange() {
+      if (!this.token) return;
+      const p = (location.hash || '').replace(/^#\//, '');
+      const routes = {
+        match: () => { this.page = 'match'; },
+        manage: () => this.goManage(),
+        stats: () => this.goStats(),
+        settings: () => this.goSettings(),
+      };
+      if (routes[p] && p !== this.page) routes[p]();
+    },
     async api(method, url, body) {
       const opt = { method, headers: { 'Authorization': 'Bearer ' + this.token, 'Content-Type': 'application/json' } };
       if (body !== undefined) opt.body = JSON.stringify(body);
@@ -743,6 +877,7 @@ createApp({
         if (!r.ok) throw new Error(data.detail || '登录失败');
         this.token = data.token; localStorage.setItem('token', data.token);
         await this.initData();
+        this.onHashChange();
       } catch (e) { this.loginErr = e.message; } finally { this.loggingIn = false; }
     },
     logout() { this.token = ''; localStorage.removeItem('token'); this.page = 'match'; },
