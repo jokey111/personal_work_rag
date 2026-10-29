@@ -264,7 +264,7 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
   <div v-if="!token" class="login-wrap">
     <div class="login-card">
       <h2>个人知识库</h2>
-      <p>面试 FAQ · 意图路由匹配 · 复盘闭环</p>
+      <p>面试 FAQ · 三级检索匹配 · 复盘闭环</p>
       <label class="field"><span>用户名</span><input class="input" v-model="loginForm.username" @keyup.enter="doLogin"></label>
       <label class="field"><span>密码</span><input class="input" type="password" v-model="loginForm.password" @keyup.enter="doLogin"></label>
       <div class="err" v-if="loginErr">{{ loginErr }}</div>
@@ -359,7 +359,7 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
       <div v-if="matchResult" class="card">
         <div class="route-chain">
           <b>路由</b>
-          <span>{{ matchResult.route.intent_name || '未识别意图' }}</span>
+          <span>{{ matchResult.route.intent_name || '全库检索' }}</span>
           <span v-if="matchResult.route.kb_names?.length" style="font-size:12.5px;color:var(--primary)">→ 检索库：{{ matchResult.route.kb_names.join('、') }}</span>
           <span>confidence {{ (matchResult.route.confidence ?? 0).toFixed(2) }}</span>
           <span v-if="matchResult.route.degraded" class="degraded">关键词兜底（LLM 不可用）</span>
@@ -504,30 +504,6 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
     <!-- 系统设置页 -->
     <div v-if="page==='settings'" class="settings-grid">
       <div class="card">
-        <div class="section-title"><h3>🧭 意图管理</h3><button class="btn sm" @click="openIntentEdit(null)">＋意图</button></div>
-        <p style="font-size:12px;color:var(--text-3);margin:0 0 10px 2px;line-height:1.6">
-          意图是全局路由层：匹配时 LLM 先识别问题属于哪个意图，再到该意图挂载的知识库中全量检索。一个意图可挂多个库。</p>
-        <table>
-          <thead><tr><th>意图</th><th>挂载知识库</th><th>覆盖题数</th><th>操作</th></tr></thead>
-          <tbody>
-            <tr v-for="it in intents" :key="it.id">
-              <td>
-                <b style="font-size:13.5px">{{ it.name }}</b>
-                <div v-if="it.description" style="font-size:12px;color:var(--text-3)">{{ it.description }}</div>
-              </td>
-              <td style="font-size:12.5px;color:var(--primary)">{{ it.kb_ids.length ? it.kbNames.join('、') : '⚠ 未挂载' }}</td>
-              <td>{{ it.qa_count }}</td>
-              <td style="white-space:nowrap">
-                <button class="icon-btn" @click="openIntentEdit(it)">✏️</button>
-                <button class="icon-btn" @click="delIntent(it)">🗑</button>
-              </td>
-            </tr>
-            <tr v-if="!intents.length"><td colspan="4" style="color:var(--text-3);text-align:center;padding:20px">还没有意图</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="card">
         <div class="section-title"><h3>📚 知识库管理</h3><button class="btn sm" @click="openKbNew">＋知识库</button></div>
         <table>
           <thead><tr><th>名称</th><th>描述</th><th>题数</th><th>默认</th><th>操作</th></tr></thead>
@@ -663,28 +639,6 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
       <div style="display:flex;gap:10px;justify-content:flex-end">
         <button class="btn ghost" @click="kbModal=false">取消</button>
         <button class="btn" @click="saveKb">保存</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 意图编辑 -->
-  <div v-if="intentModal" class="modal-mask" @click.self="intentModal=false">
-    <div class="modal">
-      <h3 style="margin-bottom:14px">{{ intentForm.id ? '编辑意图' : '新增意图' }}</h3>
-      <label class="field"><span>意图名称</span><input class="input" v-model="intentForm.name" placeholder="如：技术原理 / 项目经历"></label>
-      <label class="field"><span>描述 / 典型问题示例（给 LLM 识别用，写得越清楚越准）</span>
-        <textarea class="input" rows="3" v-model="intentForm.description"></textarea>
-      </label>
-      <label class="field"><span>挂载知识库（识别到该意图后在这些库中全量检索，可多选）</span>
-        <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:4px">
-          <label v-for="k in kbs" :key="k.id" style="display:flex;align-items:center;gap:4px;font-size:13px">
-            <input type="checkbox" :value="k.id" v-model="intentForm.kb_ids"> {{ k.name }}
-          </label>
-        </div>
-      </label>
-      <div style="display:flex;gap:10px;justify-content:flex-end">
-        <button class="btn ghost" @click="intentModal=false">取消</button>
-        <button class="btn" @click="saveIntent" :disabled="!intentForm.name.trim()">保存</button>
       </div>
     </div>
   </div>
@@ -838,7 +792,6 @@ createApp({
       topK: '', matchSteps: [],
       settingsSaving: false, settingsSaved: false, settingsForm: {},
       vectorStatus: null, rebuilding: false,
-      intents: [],
       categories: [], expandedCats: {}, filterCategoryId: 'all', catsByKb: {},
       tags: [], filterTagId: 'all',
       qas: [], keyword: '',
@@ -849,8 +802,6 @@ createApp({
       expandedQas: {},
       overview: {}, topCategories: [], topTags: [], records: [], confirmDelLog: null,
       kbModal: false, kbEditId: null, kbForm: { name: '', description: '', is_default: false },
-      intentModal: false,
-      intentForm: { id: null, name: '', description: '', sort_order: 0, kb_ids: [] },
       catModal: false, catForm: { id: null, kb_id: null, parent_id: null, name: '' },
       tagModal: false, tagForm: { id: null, name: '' },
       qaModal: false, qaForm: {},
@@ -964,7 +915,6 @@ createApp({
     logout() { this.token = ''; localStorage.removeItem('token'); this.page = 'match'; },
     async initData() {
       await this.loadKbs();
-      await this.loadIntents();
       await this.loadSettings();
       await this.loadCategories();
       await this.loadTags();
@@ -982,13 +932,6 @@ createApp({
       this.filterTagId = 'all';
       this.loadCategories();
       if (this.page === 'manage') this.loadQas();
-    },
-    async loadIntents() {
-      const list = await this.api('GET', '/api/intents');
-      list.forEach(it => {
-        it.kbNames = (it.kb_ids || []).map(id => this.kbs.find(k => k.id === id)?.name || ('库#' + id));
-      });
-      this.intents = list;
     },
     async loadCategories() {
       if (!this.kbId) return;
@@ -1201,7 +1144,7 @@ createApp({
     goStats() { this.page = 'stats'; this.loadStats(); },
     async goSettings() {
       this.page = 'settings';
-      await Promise.all([this.loadIntents(), this.loadSettings(), this.loadKbs(), this.loadTags(), this.loadCategories()]);
+      await Promise.all([this.loadSettings(), this.loadKbs(), this.loadTags(), this.loadCategories()]);
       this.loadVectorStatus();
     },
     async loadVectorStatus() {
@@ -1302,27 +1245,6 @@ createApp({
         await this.loadTags();
         if (this.page === 'manage') await this.loadQas();
       } catch (e) { this.showToast(e.message, 'error'); } finally { this.importing = false; }
-    },
-    openIntentEdit(it) {
-      this.intentForm = it
-        ? { id: it.id, name: it.name, description: it.description || '', sort_order: it.sort_order || 0, kb_ids: [...(it.kb_ids || [])] }
-        : { id: null, name: '', description: '', sort_order: 0, kb_ids: this.kbId ? [this.kbId] : [] };
-      this.intentModal = true;
-    },
-    async saveIntent() {
-      try {
-        const body = { name: this.intentForm.name, description: this.intentForm.description,
-                       sort_order: this.intentForm.sort_order, kb_ids: this.intentForm.kb_ids };
-        if (this.intentForm.id) await this.api('PUT', `/api/intents/${this.intentForm.id}`, body);
-        else await this.api('POST', '/api/intents', body);
-        this.intentModal = false;
-        await this.loadIntents();
-      } catch (e) { this.showToast(e.message, 'error'); }
-    },
-    async delIntent(it) {
-      if (await this.askConfirm(`删除意图「${it.name}」？（QA 挂在知识库上，不受影响）`)) {
-        await this.api('DELETE', `/api/intents/${it.id}`); this.showToast('意图已删除', 'success'); this.loadIntents();
-      }
     },
     // ---- 分类 ----
     openCatEdit(cat, parent) {
