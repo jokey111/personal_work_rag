@@ -181,7 +181,7 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
 .ans-style-ctl .icon-btn:hover { color: var(--primary); background: var(--hover); }
 .ans-style-ctl .icon-btn.on { background: var(--primary-soft); color: var(--primary-text); }
 /* QA 行内答案编辑 */
-.qa-inline-answer { min-height: 90px; font-size: var(--qa-answer-size); font-weight: var(--qa-answer-weight); line-height: 1.7; resize: vertical; }
+.qa-inline-answer { min-height: 68px; font-size: var(--qa-answer-size); font-weight: var(--qa-answer-weight); line-height: 1.7; resize: vertical; overflow: hidden; }
 /* 题库管理：左栏（分类上 / 标签下），固定一屏高，两侧独立滚动 */
 .tree-col { position: sticky; top: 80px; align-self: start; height: calc(100vh - 104px); min-height: 420px; background: var(--card); border-radius: 14px; padding: 14px; box-shadow: var(--card-shadow); display: flex; flex-direction: column; gap: 12px; }
 .tree-half { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -537,7 +537,7 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
               <tr v-if="expandedQas[qa.id]" style="background:var(--th-bg)">
                 <td></td>
                 <td colspan="5" style="padding:8px 12px;border-left:3px solid var(--primary)">
-                  <textarea class="input qa-inline-answer" v-model="qa.answer" rows="5" placeholder="（无答案，可直接输入后保存）"></textarea>
+                  <textarea class="input qa-inline-answer" v-model="qa.answer" :data-qa="qa.id" @input="growAnswerBox($event.target)" placeholder="（无答案，可直接输入后保存）"></textarea>
                   <div v-if="qa.answer !== answerBackup[qa.id]" style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
                     <button class="btn sm ghost" @click="revertInlineAnswer(qa)">↩ 撤销</button>
                     <button class="btn sm" @click="saveInlineAnswer(qa)">💾 保存</button>
@@ -1406,9 +1406,27 @@ createApp({
     // ---- QA 行内答案编辑 ----
     toggleQa(qa) {
       this.expandedQas[qa.id] = !this.expandedQas[qa.id];
-      if (this.expandedQas[qa.id]) this.answerBackup[qa.id] = qa.answer;  // 备份原文供撤销
+      if (this.expandedQas[qa.id]) {
+        this.answerBackup[qa.id] = qa.answer;  // 备份原文供撤销
+        this.$nextTick(() => {
+          const el = document.querySelector(`textarea[data-qa="${qa.id}"]`);
+          if (el) this.growAnswerBox(el);
+        });
+      }
     },
-    revertInlineAnswer(qa) { qa.answer = this.answerBackup[qa.id]; },
+    // 高度自适应：内容高度 + 预留一行空白
+    growAnswerBox(el) {
+      el.style.height = 'auto';
+      const lh = parseFloat(getComputedStyle(el).lineHeight) || 22;
+      el.style.height = (el.scrollHeight + lh) + 'px';
+    },
+    revertInlineAnswer(qa) {
+      qa.answer = this.answerBackup[qa.id];
+      this.$nextTick(() => {
+        const el = document.querySelector(`textarea[data-qa="${qa.id}"]`);
+        if (el) this.growAnswerBox(el);
+      });
+    },
     async saveInlineAnswer(qa) {
       try {
         const body = { kb_id: qa.kb_id, category_id: qa.category_id, tag_ids: (qa.tags || []).map(t => t.id),
