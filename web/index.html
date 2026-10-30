@@ -134,7 +134,7 @@ label.field span { display: block; margin-bottom: 5px; font-weight: 600; }
 .candidate .meta { font-size: 12px; color: var(--text-3); margin-top: 2px; }
 .candidate details { margin-top: 8px; }
 .candidate summary { cursor: pointer; font-size: 13px; color: var(--primary); }
-.candidate .body { font-size: 13.5px; color: var(--text-2); margin-top: 8px; white-space: pre-wrap; line-height: 1.7; }
+.candidate .body { font-size: var(--qa-answer-size, 13.5px); font-weight: var(--qa-answer-weight, 400); color: var(--text-2); margin-top: 8px; white-space: pre-wrap; line-height: 1.7; }
 .candidate .actions { margin-top: 10px; display: flex; gap: 8px; align-items: center; }
 .fb-useful { background: var(--success-bg); color: var(--success); border: 1px solid var(--success-border); }
 .fb-useless { background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-border); }
@@ -174,6 +174,14 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
 .search-box .input { padding-right: 28px; }
 .search-clear { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; border: none; border-radius: 50%; background: var(--hover); color: var(--text-3); font-size: 13px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; transition: background .15s ease, color .15s ease; }
 .search-clear:hover { background: var(--danger-bg); color: var(--danger); }
+/* 答案文本样式控制（字号/加粗），全局变量驱动 */
+:root { --qa-answer-size: 13.5px; --qa-answer-weight: 400; }
+.ans-style-ctl { display: inline-flex; align-items: center; gap: 1px; border: 1px solid var(--border); border-radius: 8px; padding: 2px 4px; background: var(--card); height: 32px; box-sizing: border-box; }
+.ans-style-ctl .icon-btn { font-size: 12px; padding: 3px 7px; color: var(--text-2); }
+.ans-style-ctl .icon-btn:hover { color: var(--primary); background: var(--hover); }
+.ans-style-ctl .icon-btn.on { background: var(--primary-soft); color: var(--primary-text); }
+/* QA 行内答案编辑 */
+.qa-inline-answer { min-height: 90px; font-size: var(--qa-answer-size); font-weight: var(--qa-answer-weight); line-height: 1.7; resize: vertical; }
 /* 题库管理：左栏（分类上 / 标签下），固定一屏高，两侧独立滚动 */
 .tree-col { position: sticky; top: 80px; align-self: start; height: calc(100vh - 104px); min-height: 420px; background: var(--card); border-radius: 14px; padding: 14px; box-shadow: var(--card-shadow); display: flex; flex-direction: column; gap: 12px; }
 .tree-half { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -488,6 +496,11 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
         <div class="section-title">
           <h3>QA 列表 <span class="filter-desc">{{ qaFilterDesc }}</span></h3>
           <div class="btn-group">
+            <span class="ans-style-ctl" title="答案文本样式（对所有答案生效，本地记忆）">
+              <button class="icon-btn" @click="fontMinus" title="减小答案字号">A−</button>
+              <button class="icon-btn" @click="fontPlus" title="增大答案字号">A＋</button>
+              <button class="icon-btn" :class="{on: qaAnswerBold}" @click="toggleBold" title="答案加粗开/关"><b>B</b></button>
+            </span>
             <div class="search-box">
               <input class="input" style="width:180px;height:32px;padding:4px 28px 4px 10px;font-size:13px" placeholder="🔍 关键词" v-model="keyword" @keyup.enter="loadQas()">
               <button v-if="keyword" class="search-clear" @click="keyword=''; loadQas()" title="清空关键词">×</button>
@@ -508,7 +521,7 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
           <tbody>
             <template v-for="qa in qas" :key="qa.id">
               <tr>
-                <td style="text-align:center"><button class="icon-btn" @click="expandedQas[qa.id]=!expandedQas[qa.id]" :title="expandedQas[qa.id]?'收起答案':'展开答案'">{{ expandedQas[qa.id] ? '▾' : '▸' }}</button></td>
+                <td style="text-align:center"><button class="icon-btn" @click="toggleQa(qa)" :title="expandedQas[qa.id]?'收起答案':'展开答案'">{{ expandedQas[qa.id] ? '▾' : '▸' }}</button></td>
                 <td style="max-width:280px">{{ qa.question }}</td>
                 <td style="white-space:nowrap;font-size:12.5px">{{ qa.category_l1 ? (qa.category_l2 ? qa.category_l2 : qa.category_l1) : '—' }}</td>
                 <td style="max-width:160px">
@@ -523,7 +536,14 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
               </tr>
               <tr v-if="expandedQas[qa.id]" style="background:var(--th-bg)">
                 <td></td>
-                <td colspan="5" style="padding:8px 12px;white-space:pre-wrap;font-size:12.5px;color:var(--text);border-left:3px solid var(--primary)">{{ qa.answer || '（无答案）' }}</td>
+                <td colspan="5" style="padding:8px 12px;border-left:3px solid var(--primary)">
+                  <textarea class="input qa-inline-answer" v-model="qa.answer" rows="5" placeholder="（无答案，可直接输入后保存）"></textarea>
+                  <div v-if="qa.answer !== answerBackup[qa.id]" style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
+                    <button class="btn sm ghost" @click="revertInlineAnswer(qa)">↩ 撤销</button>
+                    <button class="btn sm" @click="saveInlineAnswer(qa)">💾 保存</button>
+                  </div>
+                  <div v-else style="font-size:11.5px;color:var(--text-3);text-align:right;margin-top:2px">直接编辑即可修改答案</div>
+                </td>
               </tr>
             </template>
             <tr v-if="!qas.length"><td colspan="6" style="color:var(--text-3);text-align:center;padding:24px">当前筛选条件下暂无 QA，点击右上角新增或批量导入</td></tr>
@@ -811,6 +831,9 @@ createApp({
       categories: [], expandedCats: {}, filterCategoryId: 'all', catsByKb: {},
       tags: [], filterTagId: 'all',
       qas: [], keyword: '',
+      answerBackup: {},
+      qaAnswerSize: parseFloat(localStorage.getItem('qaAnswerSize')) || 13.5,
+      qaAnswerBold: localStorage.getItem('qaAnswerBold') === '1',
       qaColWidths: (() => { try { return JSON.parse(localStorage.getItem('qaColWidths')) || []; } catch { return []; } })(),
       leftWidth: parseInt(localStorage.getItem('manageLeftWidth')) || 300, resizing: false,
       catFlex: parseFloat(localStorage.getItem('catFlex')) || 6,
@@ -892,6 +915,7 @@ createApp({
   async mounted() {
     document.documentElement.dataset.theme = this.theme;  // 恢复上次主题
     document.documentElement.dataset.font = this.font;    // 恢复上次字体
+    this.applyAnswerStyle();  // 恢复答案字号/加粗设置
     window.addEventListener('hashchange', this.onHashChange);
     if (this.token) { await this.initData(); this.onHashChange(); }  // 登录态下恢复上次页面
   },
@@ -1379,6 +1403,29 @@ createApp({
         this.showToast(`已彻底删除记录「${r.question.slice(0, 30)}${r.question.length > 30 ? '…' : ''}」`, 'success');
       } catch (e) { this.showToast(e.message, 'error'); }
     },
+    // ---- QA 行内答案编辑 ----
+    toggleQa(qa) {
+      this.expandedQas[qa.id] = !this.expandedQas[qa.id];
+      if (this.expandedQas[qa.id]) this.answerBackup[qa.id] = qa.answer;  // 备份原文供撤销
+    },
+    revertInlineAnswer(qa) { qa.answer = this.answerBackup[qa.id]; },
+    async saveInlineAnswer(qa) {
+      try {
+        const body = { kb_id: qa.kb_id, category_id: qa.category_id, tag_ids: (qa.tags || []).map(t => t.id),
+                       question: qa.question, question_aliases: qa.question_aliases || '', answer: qa.answer };
+        await this.api('PUT', `/api/qas/${qa.id}`, body);
+        delete this.answerBackup[qa.id];
+        this.showToast('答案已保存，检索索引已同步', 'success');
+      } catch (e) { this.showToast(e.message, 'error'); }
+    },
+    // ---- 答案文本样式（全局） ----
+    applyAnswerStyle() {
+      document.documentElement.style.setProperty('--qa-answer-size', this.qaAnswerSize + 'px');
+      document.documentElement.style.setProperty('--qa-answer-weight', this.qaAnswerBold ? '600' : '400');
+    },
+    fontMinus() { this.qaAnswerSize = Math.max(12, this.qaAnswerSize - 1); localStorage.setItem('qaAnswerSize', this.qaAnswerSize); this.applyAnswerStyle(); },
+    fontPlus() { this.qaAnswerSize = Math.min(18, this.qaAnswerSize + 1); localStorage.setItem('qaAnswerSize', this.qaAnswerSize); this.applyAnswerStyle(); },
+    toggleBold() { this.qaAnswerBold = !this.qaAnswerBold; localStorage.setItem('qaAnswerBold', this.qaAnswerBold ? '1' : '0'); this.applyAnswerStyle(); },
     async delQa(qa) { if (await this.askConfirm(`删除 QA「${qa.question}」？`)) { await this.api('DELETE', `/api/qas/${qa.id}`); this.showToast('QA 已删除', 'success'); this.loadQas(); this.loadCategories(); this.loadTags(); } },
     // ---- QA 表格列宽拖拽 ----
     colStyle(i) { return this.qaColWidths[i] ? { width: this.qaColWidths[i] + 'px' } : null; },
