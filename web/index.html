@@ -396,8 +396,8 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
           <span style="color:#6370a3;font-size:12px">{{ matchResult.route.reason }}</span>
         </div>
 
-        <div v-for="c in matchResult.matched" :key="c.qa_id" class="candidate">
-          <div class="head"><span class="q">{{ c.question }}</span><span class="score">score {{ (c.score ?? 0).toFixed(2) }}</span></div>
+        <div v-for="(c, cIndex) in matchResult.matched" :key="c.qa_id" class="candidate">
+          <div class="head"><span class="q"><span style="color:var(--text-3);font-size:12.5px;margin-right:6px">{{ cIndex + 1 }}.</span>{{ c.question }}</span><span class="score">score {{ (c.score ?? 0).toFixed(2) }}</span></div>
           <div class="meta">被问 {{ c.hit_count }} 次 · {{ c.reason }}</div>
           <details>
             <summary>展开答案 / 追问 / STAR 要点</summary>
@@ -519,10 +519,10 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
             <th :style="colStyle(5)"><span class="col-grip" @mousedown="startColResize($event,5)"></span>操作</th>
           </tr></thead>
           <tbody>
-            <template v-for="qa in qas" :key="qa.id">
+            <template v-for="(qa, qaIndex) in qas" :key="qa.id">
               <tr>
                 <td style="text-align:center"><button class="icon-btn" @click="toggleQa(qa)" :title="expandedQas[qa.id]?'收起答案':'展开答案'">{{ expandedQas[qa.id] ? '▾' : '▸' }}</button></td>
-                <td style="max-width:280px">{{ qa.question }}</td>
+                <td style="max-width:280px"><span style="color:var(--text-3);font-size:12.5px;margin-right:6px">{{ qaIndex + 1 }}.</span>{{ qa.question }}</td>
                 <td style="white-space:nowrap;font-size:12.5px">{{ qa.category_l1 ? (qa.category_l2 ? qa.category_l2 : qa.category_l1) : '—' }}</td>
                 <td style="max-width:160px">
                   <span v-for="t in qa.tags" :key="t.id" class="tag-chip mini">{{ t.name }}</span>
