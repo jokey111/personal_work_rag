@@ -1390,16 +1390,10 @@ createApp({
     async saveQa() {
       try {
         const body = { kb_id: this.qaForm.kb_id, category_id: this.qaForm.category_id, tag_ids: this.qaForm.tag_ids || [], question: this.qaForm.question, question_aliases: this.joinAliases(this.qaForm.aliasRows), answer: this.qaForm.answer };
-        let created = null;
         if (this.qaForm.id) await this.api('PUT', `/api/qas/${this.qaForm.id}`, body);
-        else created = await this.api('POST', '/api/qas', body);
+        else await this.api('POST', '/api/qas', body);
         this.qaModal = false;
-        await this.loadQas();
-        if (created && created.id) {  // 新建的 QA 移到列表最前面
-          const idx = this.qas.findIndex(q => q.id === created.id);
-          if (idx > 0) this.qas.unshift(...this.qas.splice(idx, 1));
-          this.expandedQas[created.id] = true;  // 置顶后自动展开，方便检查/补答案
-        }
+        await this.loadQas();  // 新建的 QA 按后端顺序追加在列表末尾
         this.loadCategories(); this.loadTags();
       } catch (e) { this.showToast(e.message, 'error'); }
     },
