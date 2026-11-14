@@ -471,7 +471,7 @@ def list_qas(kb_id: int, q: str = "", status: str = "",
     if status:
         sql += " AND qa.status=?"
         args.append(status)
-    sql += " ORDER BY qa.updated_at DESC LIMIT 500"
+    sql += " ORDER BY qa.id LIMIT 500"
     rows = [dict(r) for r in db.get_conn().execute(sql, args).fetchall()]
     tags = _qa_tags(db.get_conn(), [r["id"] for r in rows])
     for r in rows:
