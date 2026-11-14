@@ -181,7 +181,7 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
 .ans-style-ctl .icon-btn:hover { color: var(--primary); background: var(--hover); }
 .ans-style-ctl .icon-btn.on { background: var(--primary-soft); color: var(--primary-text); }
 /* QA 行内答案编辑 */
-.qa-inline-answer { min-height: 68px; font-size: var(--qa-answer-size); font-weight: var(--qa-answer-weight); line-height: 1.7; resize: vertical; overflow: hidden; }
+.qa-inline-answer { min-height: 68px; max-height: 50vh; font-size: var(--qa-answer-size); font-weight: var(--qa-answer-weight); line-height: 1.7; resize: vertical; }
 /* 题库管理：左栏（分类上 / 标签下），固定一屏高，两侧独立滚动 */
 .tree-col { position: sticky; top: 80px; align-self: start; height: calc(100vh - 104px); min-height: 420px; background: var(--card); border-radius: 14px; padding: 14px; box-shadow: var(--card-shadow); display: flex; flex-direction: column; gap: 12px; }
 .tree-half { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -1390,9 +1390,17 @@ createApp({
     async saveQa() {
       try {
         const body = { kb_id: this.qaForm.kb_id, category_id: this.qaForm.category_id, tag_ids: this.qaForm.tag_ids || [], question: this.qaForm.question, question_aliases: this.joinAliases(this.qaForm.aliasRows), answer: this.qaForm.answer };
+        let created = null;
         if (this.qaForm.id) await this.api('PUT', `/api/qas/${this.qaForm.id}`, body);
-        else await this.api('POST', '/api/qas', body);
-        this.qaModal = false; this.loadQas(); this.loadCategories(); this.loadTags();
+        else created = await this.api('POST', '/api/qas', body);
+        this.qaModal = false;
+        await this.loadQas();
+        if (created && created.id) {  // 新建的 QA 移到列表最前面
+          const idx = this.qas.findIndex(q => q.id === created.id);
+          if (idx > 0) this.qas.unshift(...this.qas.splice(idx, 1));
+          this.expandedQas[created.id] = true;  // 置顶后自动展开，方便检查/补答案
+        }
+        this.loadCategories(); this.loadTags();
       } catch (e) { this.showToast(e.message, 'error'); }
     },
     async delRecord(r) {
@@ -1414,11 +1422,14 @@ createApp({
         });
       }
     },
-    // 高度自适应：内容高度 + 预留一行空白
+    // 高度自适应：内容高度 + 预留一行空白；封顶半屏，超出部分内部滚动
     growAnswerBox(el) {
       el.style.height = 'auto';
       const lh = parseFloat(getComputedStyle(el).lineHeight) || 22;
-      el.style.height = (el.scrollHeight + lh) + 'px';
+      const max = Math.floor(window.innerHeight * 0.5);
+      const need = el.scrollHeight + lh;
+      el.style.height = Math.min(need, max) + 'px';
+      el.style.overflowY = need > max ? 'auto' : 'hidden';
     },
     revertInlineAnswer(qa) {
       qa.answer = this.answerBackup[qa.id];
