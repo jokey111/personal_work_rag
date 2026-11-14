@@ -182,6 +182,13 @@ th { color: var(--text-2); font-weight: 600; background: var(--th-bg); }
 .ans-style-ctl .icon-btn.on { background: var(--primary-soft); color: var(--primary-text); }
 /* QA 行内答案编辑 */
 .qa-inline-answer { min-height: 68px; max-height: 50vh; font-size: var(--qa-answer-size); font-weight: var(--qa-answer-weight); line-height: 1.7; resize: vertical; }
+/* 滚动条平时隐藏（透明），悬浮时淡入显示 */
+.qa-inline-answer { scrollbar-width: thin; scrollbar-color: transparent transparent; transition: scrollbar-color .25s; }
+.qa-inline-answer:hover { scrollbar-color: var(--border) transparent; }
+.qa-inline-answer::-webkit-scrollbar { width: 8px; }
+.qa-inline-answer::-webkit-scrollbar-track { background: transparent; }
+.qa-inline-answer::-webkit-scrollbar-thumb { background: transparent; border-radius: 4px; }
+.qa-inline-answer:hover::-webkit-scrollbar-thumb { background: var(--border); }
 /* 题库管理：左栏（分类上 / 标签下），固定一屏高，两侧独立滚动 */
 .tree-col { position: sticky; top: 80px; align-self: start; height: calc(100vh - 104px); min-height: 420px; background: var(--card); border-radius: 14px; padding: 14px; box-shadow: var(--card-shadow); display: flex; flex-direction: column; gap: 12px; }
 .tree-half { flex: 1; min-height: 0; display: flex; flex-direction: column; }
